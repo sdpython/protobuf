@@ -40,8 +40,6 @@
 
 #include <sstream>
 
-using google::protobuf::internal::scoped_ptr;
-
 const std::string kDescriptorFile = "google/protobuf/descriptor.proto";
 const std::string kEmptyFile = "google/protobuf/empty.proto";
 const std::string kEmptyMetadataFile = "GPBMetadata/Google/Protobuf/GPBEmpty.php";
@@ -215,19 +213,12 @@ std::string NamespacedName(const string& classname,
 
 template <typename DescriptorType>
 std::string FullClassName(const DescriptorType* desc, bool is_descriptor) {
-  string classname = desc->name();
-  const Descriptor* containing = desc->containing_type();
-  while (containing != NULL) {
-    classname = containing->name() + '_' + classname;
-    containing = containing->containing_type();
-  }
-  classname = ClassNamePrefix(classname, desc) + classname;
+  string classname = GeneratedClassName(desc);
   return NamespacedName(classname, desc, is_descriptor);
 }
 
 std::string FullClassName(const ServiceDescriptor* desc, bool is_descriptor) {
-  string classname = desc->name();
-  classname = ClassNamePrefix(classname, desc) + classname;
+  string classname = GeneratedClassName(desc);
   return NamespacedName(classname, desc, is_descriptor);
 }
 
@@ -955,7 +946,7 @@ void GenerateMetadataFile(const FileDescriptor* file,
                           bool is_descriptor,
                           GeneratorContext* generator_context) {
   std::string filename = GeneratedMetadataFileName(file->name(), is_descriptor);
-  scoped_ptr<io::ZeroCopyOutputStream> output(
+  std::unique_ptr<io::ZeroCopyOutputStream> output(
       generator_context->Open(filename));
   io::Printer printer(output.get(), '^');
 
@@ -990,7 +981,7 @@ void GenerateMetadataFile(const FileDescriptor* file,
 void GenerateEnumFile(const FileDescriptor* file, const EnumDescriptor* en,
                       bool is_descriptor, GeneratorContext* generator_context) {
   std::string filename = GeneratedEnumFileName(en, is_descriptor);
-  scoped_ptr<io::ZeroCopyOutputStream> output(
+  std::unique_ptr<io::ZeroCopyOutputStream> output(
       generator_context->Open(filename));
   io::Printer printer(output.get(), '^');
 
@@ -1049,7 +1040,7 @@ void GenerateMessageFile(const FileDescriptor* file, const Descriptor* message,
   }
 
   std::string filename = GeneratedMessageFileName(message, is_descriptor);
-  scoped_ptr<io::ZeroCopyOutputStream> output(
+  std::unique_ptr<io::ZeroCopyOutputStream> output(
       generator_context->Open(filename));
   io::Printer printer(output.get(), '^');
 
@@ -1150,7 +1141,7 @@ void GenerateServiceFile(const FileDescriptor* file,
   const ServiceDescriptor* service, bool is_descriptor,
   GeneratorContext* generator_context) {
   std::string filename = GeneratedServiceFileName(service, is_descriptor);
-  scoped_ptr<io::ZeroCopyOutputStream> output(
+  std::unique_ptr<io::ZeroCopyOutputStream> output(
       generator_context->Open(filename));
   io::Printer printer(output.get(), '^');
 
@@ -1272,7 +1263,7 @@ static void GenerateDocCommentBodyForLocation(
     // HTML-escape them so that they don't accidentally close the doc comment.
     comments = EscapePhpdoc(comments);
 
-    vector<string> lines = Split(comments, "\n");
+    std::vector<string> lines = Split(comments, "\n");
     while (!lines.empty() && lines.back().empty()) {
       lines.pop_back();
     }
@@ -1417,6 +1408,31 @@ bool Generator::Generate(const FileDescriptor* file, const string& parameter,
   GenerateFile(file, is_descriptor, generator_context);
 
   return true;
+}
+
+std::string GeneratedClassName(const Descriptor* desc) {
+  std::string classname = desc->name();
+  const Descriptor* containing = desc->containing_type();
+  while (containing != NULL) {
+    classname = containing->name() + '_' + classname;
+    containing = containing->containing_type();
+  }
+  return ClassNamePrefix(classname, desc) + classname;
+}
+
+std::string GeneratedClassName(const EnumDescriptor* desc) {
+  std::string classname = desc->name();
+  const Descriptor* containing = desc->containing_type();
+  while (containing != NULL) {
+    classname = containing->name() + '_' + classname;
+    containing = containing->containing_type();
+  }
+  return ClassNamePrefix(classname, desc) + classname;
+}
+
+std::string GeneratedClassName(const ServiceDescriptor* desc) {
+  std::string classname = desc->name();
+  return ClassNamePrefix(classname, desc) + classname;
 }
 
 }  // namespace php
