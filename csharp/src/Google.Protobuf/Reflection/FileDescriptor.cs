@@ -30,9 +30,11 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endregion
 
+using Google.Protobuf.WellKnownTypes;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace Google.Protobuf.Reflection
 {
@@ -43,12 +45,22 @@ namespace Google.Protobuf.Reflection
     /// </summary>
     public sealed class FileDescriptor : IDescriptor
     {
-        private FileDescriptor(ByteString descriptorData, FileDescriptorProto proto, FileDescriptor[] dependencies, DescriptorPool pool, bool allowUnknownDependencies, GeneratedClrTypeInfo generatedCodeInfo)
+        // Prevent linker failures when using IL2CPP with the well-known types.
+        static FileDescriptor()
+        {
+            ForceReflectionInitialization<Syntax>();
+            ForceReflectionInitialization<NullValue>();
+            ForceReflectionInitialization<Field.Types.Cardinality>();
+            ForceReflectionInitialization<Field.Types.Kind>();
+            ForceReflectionInitialization<Value.KindOneofCase>();
+        }
+
+        private FileDescriptor(ByteString descriptorData, FileDescriptorProto proto, IEnumerable<FileDescriptor> dependencies, DescriptorPool pool, bool allowUnknownDependencies, GeneratedClrTypeInfo generatedCodeInfo)
         {
             SerializedData = descriptorData;
             DescriptorPool = pool;
             Proto = proto;
-            Dependencies = new ReadOnlyCollection<FileDescriptor>((FileDescriptor[]) dependencies.Clone());
+            Dependencies = new ReadOnlyCollection<FileDescriptor>(dependencies.ToList());
 
             PublicDependencies = DeterminePublicDependencies(this, proto, dependencies, allowUnknownDependencies);
 
@@ -56,11 +68,11 @@ namespace Google.Protobuf.Reflection
 
             MessageTypes = DescriptorUtil.ConvertAndMakeReadOnly(proto.MessageType,
                                                                  (message, index) =>
-                                                                 new MessageDescriptor(message, this, null, index, generatedCodeInfo.NestedTypes[index]));
+                                                                 new MessageDescriptor(message, this, null, index, generatedCodeInfo?.NestedTypes[index]));
 
             EnumTypes = DescriptorUtil.ConvertAndMakeReadOnly(proto.EnumType,
                                                               (enumType, index) =>
-                                                              new EnumDescriptor(enumType, this, null, index, generatedCodeInfo.NestedEnums[index]));
+                                                              new EnumDescriptor(enumType, this, null, index, generatedCodeInfo?.NestedEnums[index]));
 
             Services = DescriptorUtil.ConvertAndMakeReadOnly(proto.Service,
                                                              (service, index) =>
@@ -87,13 +99,9 @@ namespace Google.Protobuf.Reflection
         /// Extracts public dependencies from direct dependencies. This is a static method despite its
         /// first parameter, as the value we're in the middle of constructing is only used for exceptions.
         /// </summary>
-        private static IList<FileDescriptor> DeterminePublicDependencies(FileDescriptor @this, FileDescriptorProto proto, FileDescriptor[] dependencies, bool allowUnknownDependencies)
+        private static IList<FileDescriptor> DeterminePublicDependencies(FileDescriptor @this, FileDescriptorProto proto, IEnumerable<FileDescriptor> dependencies, bool allowUnknownDependencies)
         {
-            var nameToFileMap = new Dictionary<string, FileDescriptor>();
-            foreach (var file in dependencies)
-            {
-                nameToFileMap[file.Name] = file;
-            }
+            var nameToFileMap = dependencies.ToDictionary(file => file.Name);
             var publicDependencies = new List<FileDescriptor>();
             for (int i = 0; i < proto.PublicDependency.Count; i++)
             {
@@ -103,8 +111,7 @@ namespace Google.Protobuf.Reflection
                     throw new DescriptorValidationException(@this, "Invalid public dependency index.");
                 }
                 string name = proto.Dependency[index];
-                FileDescriptor file = nameToFileMap[name];
-                if (file == null)
+                if (!nameToFileMap.TryGetValue(name, out var file))
                 {
                     if (!allowUnknownDependencies)
                     {
@@ -305,6 +312,49 @@ namespace Google.Protobuf.Reflection
         }
 
         /// <summary>
+        /// Converts the given descriptor binary data into FileDescriptor objects.
+        /// Note: reflection using the returned FileDescriptors is not currently supported.
+        /// </summary>
+        /// <param name="descriptorData">The binary file descriptor proto data. Must not be null, and any
+        /// dependencies must come before the descriptor which depends on them. (If A depends on B, and B
+        /// depends on C, then the descriptors must be presented in the order C, B, A.) This is compatible
+        /// with the order in which protoc provides descriptors to plugins.</param>
+        /// <returns>The file descriptors corresponding to <paramref name="descriptorData"/>.</returns>
+        public static IReadOnlyList<FileDescriptor> BuildFromByteStrings(IEnumerable<ByteString> descriptorData)
+        {
+            ProtoPreconditions.CheckNotNull(descriptorData, nameof(descriptorData));
+
+            // TODO: See if we can build a single DescriptorPool instead of building lots of them.
+            // This will all behave correctly, but it's less efficient than we'd like.
+            var descriptors = new List<FileDescriptor>();
+            var descriptorsByName = new Dictionary<string, FileDescriptor>();
+            foreach (var data in descriptorData)
+            {
+                var proto = FileDescriptorProto.Parser.ParseFrom(data);
+                var dependencies = new List<FileDescriptor>();
+                foreach (var dependencyName in proto.Dependency)
+                {
+                    if (!descriptorsByName.TryGetValue(dependencyName, out var dependency))
+                    {
+                        throw new ArgumentException($"Dependency missing: {dependencyName}");
+                    }
+                    dependencies.Add(dependency);
+                }
+                var pool = new DescriptorPool(dependencies);
+                FileDescriptor descriptor = new FileDescriptor(
+                    data, proto, dependencies, pool,
+                    allowUnknownDependencies: false, generatedCodeInfo: null);
+                descriptors.Add(descriptor);
+                if (descriptorsByName.ContainsKey(descriptor.Name))
+                {
+                    throw new ArgumentException($"Duplicate descriptor name: {descriptor.Name}");
+                }
+                descriptorsByName.Add(descriptor.Name, descriptor);
+            }
+            return new ReadOnlyCollection<FileDescriptor>(descriptors);
+        }
+
+        /// <summary>
         /// Returns a <see cref="System.String" /> that represents this instance.
         /// </summary>
         /// <returns>
@@ -334,5 +384,18 @@ namespace Google.Protobuf.Reflection
         /// The (possibly empty) set of custom options for this file.
         /// </summary>
         public CustomOptions CustomOptions => Proto.Options?.CustomOptions ?? CustomOptions.Empty;
+
+        /// <summary>
+        /// Performs initialization for the given generic type argument.
+        /// </summary>
+        /// <remarks>
+        /// This method is present for the sake of AOT compilers. It allows code (whether handwritten or generated)
+        /// to make calls into the reflection machinery of this library to express an intention to use that type
+        /// reflectively (e.g. for JSON parsing and formatting). The call itself does almost nothing, but AOT compilers
+        /// attempting to determine which generic type arguments need to be handled will spot the code path and act
+        /// accordingly.
+        /// </remarks>
+        /// <typeparam name="T">The type to force initialization for.</typeparam>
+        public static void ForceReflectionInitialization<T>() => ReflectionUtil.ForceInitialize<T>();
     }
 }
