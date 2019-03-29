@@ -47,6 +47,7 @@
 #endif
 #include <google/protobuf/stubs/common.h>
 #include <google/protobuf/stubs/logging.h>
+#include <google/protobuf/io/strtod.h>
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <google/protobuf/descriptor.pb.h>
@@ -309,12 +310,25 @@ static PyObject* New(PyTypeObject* type,
   return result.release();
 }
 
-static void Dealloc(CMessageClass *self) {
+static void Dealloc(PyObject* pself) {
+  CMessageClass* self = reinterpret_cast<CMessageClass*>(pself);
   Py_XDECREF(self->py_message_descriptor);
   Py_XDECREF(self->py_message_factory);
-  Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
+  return PyType_Type.tp_dealloc(pself);
 }
 
+static int GcTraverse(PyObject* pself, visitproc visit, void* arg) {
+  CMessageClass* self = reinterpret_cast<CMessageClass*>(pself);
+  Py_VISIT(self->py_message_descriptor);
+  Py_VISIT(self->py_message_factory);
+  return PyType_Type.tp_traverse(pself, visit, arg);
+}
+
+static int GcClear(PyObject* pself) {
+  // It's important to keep the descriptor and factory alive, until the
+  // C++ message is fully destructed.
+  return PyType_Type.tp_clear(pself);
+}
 
 // This function inserts and empty weakref at the end of the list of
 // subclasses for the main protocol buffer Message class.
@@ -328,10 +342,16 @@ static int InsertEmptyWeakref(PyTypeObject *base_type) {
   // https://bugs.python.org/issue17936.
   return 0;
 #else
+#ifdef Py_DEBUG
+  // The code below causes all new subclasses to append an entry, which is never
+  // cleared. This is a small memory leak, which we disable in Py_DEBUG mode
+  // to have stable refcounting checks.
+#else
   PyObject *subclasses = base_type->tp_subclasses;
   if (subclasses && PyList_CheckExact(subclasses)) {
     return PyList_Append(subclasses, kEmptyWeakref);
   }
+#endif  // !Py_DEBUG
   return 0;
 #endif  // PY_MAJOR_VERSION >= 3
 }
@@ -450,44 +470,44 @@ static PyObject* GetAttr(CMessageClass* self, PyObject* name) {
 }  // namespace message_meta
 
 static PyTypeObject _CMessageClass_Type = {
-  PyVarObject_HEAD_INIT(&PyType_Type, 0)
-  FULL_MODULE_NAME ".MessageMeta",     // tp_name
-  sizeof(CMessageClass),               // tp_basicsize
-  0,                                   // tp_itemsize
-  (destructor)message_meta::Dealloc,   // tp_dealloc
-  0,                                   // tp_print
-  0,                                   // tp_getattr
-  0,                                   // tp_setattr
-  0,                                   // tp_compare
-  0,                                   // tp_repr
-  0,                                   // tp_as_number
-  0,                                   // tp_as_sequence
-  0,                                   // tp_as_mapping
-  0,                                   // tp_hash
-  0,                                   // tp_call
-  0,                                   // tp_str
-  (getattrofunc)message_meta::GetAttr,  // tp_getattro
-  0,                                   // tp_setattro
-  0,                                   // tp_as_buffer
-  Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,  // tp_flags
-  "The metaclass of ProtocolMessages",  // tp_doc
-  0,                                   // tp_traverse
-  0,                                   // tp_clear
-  0,                                   // tp_richcompare
-  0,                                   // tp_weaklistoffset
-  0,                                   // tp_iter
-  0,                                   // tp_iternext
-  0,                                   // tp_methods
-  0,                                   // tp_members
-  message_meta::Getters,               // tp_getset
-  0,                                   // tp_base
-  0,                                   // tp_dict
-  0,                                   // tp_descr_get
-  0,                                   // tp_descr_set
-  0,                                   // tp_dictoffset
-  0,                                   // tp_init
-  0,                                   // tp_alloc
-  message_meta::New,                   // tp_new
+    PyVarObject_HEAD_INIT(&PyType_Type, 0) FULL_MODULE_NAME
+    ".MessageMeta",                       // tp_name
+    sizeof(CMessageClass),                // tp_basicsize
+    0,                                    // tp_itemsize
+    message_meta::Dealloc,                // tp_dealloc
+    0,                                    // tp_print
+    0,                                    // tp_getattr
+    0,                                    // tp_setattr
+    0,                                    // tp_compare
+    0,                                    // tp_repr
+    0,                                    // tp_as_number
+    0,                                    // tp_as_sequence
+    0,                                    // tp_as_mapping
+    0,                                    // tp_hash
+    0,                                    // tp_call
+    0,                                    // tp_str
+    (getattrofunc)message_meta::GetAttr,  // tp_getattro
+    0,                                    // tp_setattro
+    0,                                    // tp_as_buffer
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,  // tp_flags
+    "The metaclass of ProtocolMessages",                            // tp_doc
+    message_meta::GcTraverse,  // tp_traverse
+    message_meta::GcClear,     // tp_clear
+    0,                         // tp_richcompare
+    0,                         // tp_weaklistoffset
+    0,                         // tp_iter
+    0,                         // tp_iternext
+    0,                         // tp_methods
+    0,                         // tp_members
+    message_meta::Getters,     // tp_getset
+    0,                         // tp_base
+    0,                         // tp_dict
+    0,                         // tp_descr_get
+    0,                         // tp_descr_set
+    0,                         // tp_dictoffset
+    0,                         // tp_init
+    0,                         // tp_alloc
+    message_meta::New,         // tp_new
 };
 PyTypeObject* CMessageClass_Type = &_CMessageClass_Type;
 
@@ -585,10 +605,6 @@ static int VisitCompositeField(const FieldDescriptor* descriptor,
 // Returns -1 on error and 0 on success.
 template<class Visitor>
 int ForEachCompositeField(CMessage* self, Visitor visitor) {
-  Py_ssize_t pos = 0;
-  PyObject* key;
-  PyObject* field;
-
   // Visit normal fields.
   if (self->composite_fields) {
     for (CMessage::CompositeFieldsMap::iterator it =
@@ -760,7 +776,7 @@ bool CheckAndGetFloat(PyObject* arg, float* value) {
   if (!CheckAndGetDouble(arg, &double_value)) {
     return false;
   }
-  *value = static_cast<float>(double_value);
+  *value = io::SafeDoubleToFloat(double_value);
   return true;
 }
 
@@ -1240,17 +1256,20 @@ int InitAttributes(CMessage* self, PyObject* args, PyObject* kwargs) {
       const FieldDescriptor* value_descriptor =
           descriptor->message_type()->FindFieldByName("value");
       if (value_descriptor->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE) {
-        Py_ssize_t map_pos = 0;
-        PyObject* map_key;
-        PyObject* map_value;
-        while (PyDict_Next(value, &map_pos, &map_key, &map_value)) {
-          ScopedPyObjectPtr function_return;
-          function_return.reset(PyObject_GetItem(map.get(), map_key));
-          if (function_return.get() == NULL) {
+        ScopedPyObjectPtr iter(PyObject_GetIter(value));
+        if (iter == NULL) {
+          PyErr_Format(PyExc_TypeError, "Argument %s is not iterable", PyString_AsString(name));
+          return -1;
+        }
+        ScopedPyObjectPtr next;
+        while ((next.reset(PyIter_Next(iter.get()))) != NULL) {
+          ScopedPyObjectPtr source_value(PyObject_GetItem(value, next.get()));
+          ScopedPyObjectPtr dest_value(PyObject_GetItem(map.get(), next.get()));
+          if (source_value.get() == NULL || dest_value.get() == NULL) {
             return -1;
           }
           ScopedPyObjectPtr ok(PyObject_CallMethod(
-              function_return.get(), "MergeFrom", "O", map_value));
+              dest_value.get(), "MergeFrom", "O", source_value.get()));
           if (ok.get() == NULL) {
             return -1;
           }
@@ -1554,10 +1573,11 @@ const FieldDescriptor* FindFieldWithOneofs(
 }
 
 bool CheckHasPresence(const FieldDescriptor* field_descriptor, bool in_oneof) {
+  auto message_name = field_descriptor->containing_type()->name();
   if (field_descriptor->label() == FieldDescriptor::LABEL_REPEATED) {
     PyErr_Format(PyExc_ValueError,
-                 "Protocol message has no singular \"%s\" field.",
-                 field_descriptor->name().c_str());
+                 "Protocol message %s has no singular \"%s\" field.",
+                 message_name.c_str(), field_descriptor->name().c_str());
     return false;
   }
 
@@ -1565,8 +1585,8 @@ bool CheckHasPresence(const FieldDescriptor* field_descriptor, bool in_oneof) {
     // HasField() for a oneof *itself* isn't supported.
     if (in_oneof) {
       PyErr_Format(PyExc_ValueError,
-                   "Can't test oneof field \"%s\" for presence in proto3, use "
-                   "WhichOneof instead.",
+                   "Can't test oneof field \"%s.%s\" for presence in proto3, "
+                   "use WhichOneof instead.", message_name.c_str(),
                    field_descriptor->containing_oneof()->name().c_str());
       return false;
     }
@@ -1579,8 +1599,8 @@ bool CheckHasPresence(const FieldDescriptor* field_descriptor, bool in_oneof) {
     if (field_descriptor->cpp_type() != FieldDescriptor::CPPTYPE_MESSAGE) {
       PyErr_Format(
           PyExc_ValueError,
-          "Can't test non-submessage field \"%s\" for presence in proto3.",
-          field_descriptor->name().c_str());
+          "Can't test non-submessage field \"%s.%s\" for presence in proto3.",
+          message_name.c_str(), field_descriptor->name().c_str());
       return false;
     }
   }
@@ -1608,7 +1628,8 @@ PyObject* HasField(CMessage* self, PyObject* arg) {
       FindFieldWithOneofs(message, string(field_name, size), &is_in_oneof);
   if (field_descriptor == NULL) {
     if (!is_in_oneof) {
-      PyErr_Format(PyExc_ValueError, "Unknown field %s.", field_name);
+      PyErr_Format(PyExc_ValueError, "Protocol message %s has no field %s.",
+                   message->GetDescriptor()->name().c_str(), field_name);
       return NULL;
     } else {
       Py_RETURN_FALSE;
@@ -2140,6 +2161,7 @@ static PyObject* MergeFromString(CMessage* self, PyObject* arg) {
       reinterpret_cast<const uint8*>(data), data_length);
   if (allow_oversize_protos) {
     input.SetTotalBytesLimit(INT_MAX, INT_MAX);
+    input.SetRecursionLimit(INT_MAX);
   }
   PyMessageFactory* factory = GetFactoryForMessage(self);
   input.SetExtensionRegistry(factory->pool->pool, factory->message_factory);
@@ -2822,8 +2844,6 @@ PyObject* GetFieldValue(CMessage* self,
     }
   }
 
-  const Descriptor* message_descriptor =
-      (reinterpret_cast<CMessageClass*>(Py_TYPE(self)))->message_descriptor;
   if (self->message->GetDescriptor() != field_descriptor->containing_type()) {
     PyErr_Format(PyExc_TypeError,
                  "descriptor to field '%s' doesn't apply to '%s' object",

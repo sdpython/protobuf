@@ -46,19 +46,25 @@
 #include <google/protobuf/wire_format.h>
 #include <google/protobuf/stubs/strutil.h>
 
+
 namespace google {
 namespace protobuf {
 namespace compiler {
 namespace java {
 
 namespace {
+bool EnableExperimentalRuntimeForLite() {
+#ifdef PROTOBUF_EXPERIMENT
+  return PROTOBUF_EXPERIMENT;
+#else   // PROTOBUF_EXPERIMENT
+  return false;
+#endif  // !PROTOBUF_EXPERIMENT
+}
 
-void SetEnumVariables(const FieldDescriptor* descriptor,
-                      int messageBitIndex,
-                      int builderBitIndex,
-                      const FieldGeneratorInfo* info,
+void SetEnumVariables(const FieldDescriptor* descriptor, int messageBitIndex,
+                      int builderBitIndex, const FieldGeneratorInfo* info,
                       ClassNameResolver* name_resolver,
-                      std::map<string, string>* variables) {
+                      std::map<std::string, std::string>* variables) {
   SetCommonFieldVariables(descriptor, info, variables);
 
   (*variables)["type"] =
@@ -67,10 +73,10 @@ void SetEnumVariables(const FieldDescriptor* descriptor,
       name_resolver->GetMutableClassName(descriptor->enum_type());
   (*variables)["default"] = ImmutableDefaultValue(descriptor, name_resolver);
   (*variables)["default_number"] =
-      SimpleItoa(descriptor->default_value_enum()->number());
-  (*variables)["tag"] = SimpleItoa(
+      StrCat(descriptor->default_value_enum()->number());
+  (*variables)["tag"] = StrCat(
       static_cast<int32>(internal::WireFormat::MakeTag(descriptor)));
-  (*variables)["tag_size"] = SimpleItoa(
+  (*variables)["tag_size"] = StrCat(
       internal::WireFormat::TagSize(descriptor->number(), GetType(descriptor)));
   // TODO(birdo): Add @deprecated javadoc when generating javadoc is supported
   // by the proto compiler
@@ -131,7 +137,7 @@ ImmutableEnumFieldLiteGenerator(const FieldDescriptor* descriptor,
 ImmutableEnumFieldLiteGenerator::~ImmutableEnumFieldLiteGenerator() {}
 
 int ImmutableEnumFieldLiteGenerator::GetNumBitsForMessage() const {
-  return 1;
+  return SupportFieldPresence(descriptor_->file()) ? 1 : 0;
 }
 
 void ImmutableEnumFieldLiteGenerator::
@@ -351,7 +357,7 @@ GenerateHashCode(io::Printer* printer) const {
     "hash = (53 * hash) + $name$_;\n");
 }
 
-string ImmutableEnumFieldLiteGenerator::GetBoxedType() const {
+std::string ImmutableEnumFieldLiteGenerator::GetBoxedType() const {
   return name_resolver_->GetImmutableClassName(descriptor_->enum_type());
 }
 
@@ -657,7 +663,7 @@ GenerateMembers(io::Printer* printer) const {
     printer->Annotate("{", "}", descriptor_);
   }
 
-  if (descriptor_->is_packed() &&
+  if (!EnableExperimentalRuntimeForLite() && descriptor_->is_packed() &&
       context_->HasGeneratedMethods(descriptor_->containing_type())) {
     printer->Print(variables_,
       "private int $name$MemoizedSerializedSize;\n");
@@ -930,6 +936,8 @@ GenerateParsingDoneCode(io::Printer* printer) const {
 
 void RepeatedImmutableEnumFieldLiteGenerator::
 GenerateSerializationCode(io::Printer* printer) const {
+  GOOGLE_CHECK(!EnableExperimentalRuntimeForLite());
+
   if (descriptor_->is_packed()) {
     printer->Print(variables_,
       "if (get$capitalized_name$List().size() > 0) {\n"
@@ -949,6 +957,8 @@ GenerateSerializationCode(io::Printer* printer) const {
 
 void RepeatedImmutableEnumFieldLiteGenerator::
 GenerateSerializedSizeCode(io::Printer* printer) const {
+  GOOGLE_CHECK(!EnableExperimentalRuntimeForLite());
+
   printer->Print(variables_,
     "{\n"
     "  int dataSize = 0;\n");
@@ -998,7 +1008,7 @@ GenerateHashCode(io::Printer* printer) const {
     "}\n");
 }
 
-string RepeatedImmutableEnumFieldLiteGenerator::GetBoxedType() const {
+std::string RepeatedImmutableEnumFieldLiteGenerator::GetBoxedType() const {
   return name_resolver_->GetImmutableClassName(descriptor_->enum_type());
 }
 

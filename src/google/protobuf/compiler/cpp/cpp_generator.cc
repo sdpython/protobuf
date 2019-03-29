@@ -46,6 +46,7 @@
 #include <google/protobuf/io/zero_copy_stream.h>
 
 
+
 namespace google {
 namespace protobuf {
 namespace compiler {
@@ -55,10 +56,10 @@ CppGenerator::CppGenerator() {}
 CppGenerator::~CppGenerator() {}
 
 bool CppGenerator::Generate(const FileDescriptor* file,
-                            const string& parameter,
+                            const std::string& parameter,
                             GeneratorContext* generator_context,
-                            string* error) const {
-  std::vector<std::pair<string, string> > options;
+                            std::string* error) const {
+  std::vector<std::pair<std::string, std::string> > options;
   ParseGeneratorParameter(parameter, &options);
 
   // -----------------------------------------------------------------
@@ -78,19 +79,8 @@ bool CppGenerator::Generate(const FileDescriptor* file,
   //
   Options file_options;
 
-  switch (runtime_) {
-    case Runtime::kGoogle3:
-      file_options.opensource_runtime = false;
-      break;
-    case Runtime::kOpensource:
-      file_options.opensource_runtime = true;
-      file_options.opensource_include_paths = true;
-      break;
-    case Runtime::kOpensourceGoogle3:
-      file_options.opensource_runtime = true;
-      file_options.opensource_include_paths = false;
-      break;
-  }
+  file_options.opensource_runtime = opensource_runtime_;
+  file_options.runtime_include_base = runtime_include_base_;
 
   for (int i = 0; i < options.size(); i++) {
     if (options[i].first == "dllexport_decl") {
@@ -103,9 +93,12 @@ bool CppGenerator::Generate(const FileDescriptor* file,
       file_options.annotation_pragma_name = options[i].second;
     } else if (options[i].first == "annotation_guard_name") {
       file_options.annotation_guard_name = options[i].second;
+    } else if (options[i].first == "speed") {
+      file_options.enforce_mode = EnforceOptimizeMode::kSpeed;
     } else if (options[i].first == "lite") {
-      file_options.enforce_lite = true;
+      file_options.enforce_mode = EnforceOptimizeMode::kLiteRuntime;
     } else if (options[i].first == "lite_implicit_weak_fields") {
+      file_options.enforce_mode = EnforceOptimizeMode::kLiteRuntime;
       file_options.lite_implicit_weak_fields = true;
       if (!options[i].second.empty()) {
         file_options.num_cc_files = strto32(options[i].second.c_str(),
@@ -132,7 +125,7 @@ bool CppGenerator::Generate(const FileDescriptor* file,
   // -----------------------------------------------------------------
 
 
-  string basename = StripProto(file->name());
+  std::string basename = StripProto(file->name());
 
   if (MaybeBootstrap(file_options, generator_context, file_options.bootstrap,
                      &basename)) {
@@ -148,7 +141,7 @@ bool CppGenerator::Generate(const FileDescriptor* file,
     GeneratedCodeInfo annotations;
     io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
         &annotations);
-    string info_path = basename + ".proto.h.meta";
+    std::string info_path = basename + ".proto.h.meta";
     io::Printer printer(output.get(), '$', file_options.annotate_headers
                                                ? &annotation_collector
                                                : NULL);
@@ -167,7 +160,7 @@ bool CppGenerator::Generate(const FileDescriptor* file,
     GeneratedCodeInfo annotations;
     io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
         &annotations);
-    string info_path = basename + ".pb.h.meta";
+    std::string info_path = basename + ".pb.h.meta";
     io::Printer printer(output.get(), '$', file_options.annotate_headers
                                                ? &annotation_collector
                                                : NULL);
@@ -211,8 +204,7 @@ bool CppGenerator::Generate(const FileDescriptor* file,
       }
       for (int i = 0; i < num_cc_files; i++) {
         std::unique_ptr<io::ZeroCopyOutputStream> output(
-            generator_context->Open(basename + ".out/" +
-                                    SimpleItoa(i) + ".cc"));
+            generator_context->Open(StrCat(basename, ".out/", i, ".cc")));
         io::Printer printer(output.get(), '$');
         if (i < file_generator.NumMessages()) {
           file_generator.GenerateSourceForMessage(i, &printer);

@@ -46,14 +46,8 @@
 #include <google/protobuf/stubs/status.h>
 #include <google/protobuf/stubs/statusor.h>
 
-#include <google/protobuf/port_def.inc>
 
-namespace google {
-namespace protobuf {
-class Field;
-class Type;
-}  // namespace protobuf
-}  // namespace google
+#include <google/protobuf/port_def.inc>
 
 namespace google {
 namespace protobuf {
@@ -155,9 +149,9 @@ class PROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
       const google::protobuf::Type& type, uint32 tag) const;
 
   // Renders a field value to the ObjectWriter.
-  util::Status RenderField(const google::protobuf::Field* field,
-                             StringPiece field_name,
-                             ObjectWriter* ow) const;
+  virtual util::Status RenderField(const google::protobuf::Field* field,
+                                     StringPiece field_name,
+                                     ObjectWriter* ow) const;
 
   // Reads field value according to Field spec in 'field' and returns the read
   // value as string. This only works for primitive datatypes (no message
@@ -181,15 +175,17 @@ class PROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
   // Renders a NWP map.
   // Returns the next tag after reading all map entries. The caller should use
   // this tag before reading more tags from the stream.
-  util::StatusOr<uint32> RenderMap(const google::protobuf::Field* field,
-                                     StringPiece name, uint32 list_tag,
-                                     ObjectWriter* ow) const;
+  util::StatusOr<uint32>
+      RenderMap(const google::protobuf::Field* field,
+                StringPiece name, uint32 list_tag,
+                ObjectWriter* ow) const;
 
   // Renders a packed repeating field. A packed field is stored as:
   // {tag length item1 item2 item3} instead of the less efficient
   // {tag item1 tag item2 tag item3}.
   util::Status RenderPacked(const google::protobuf::Field* field,
                               ObjectWriter* ow) const;
+
 
   // Renders a google.protobuf.Timestamp value to ObjectWriter
   static util::Status RenderTimestamp(const ProtoStreamObjectSource* os,
@@ -324,6 +320,11 @@ class PROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
 
   // Whether to add trailing zeros for timestamp and duration.
   bool add_trailing_zeros_for_timestamp_and_duration_;
+
+  // Whether output the empty object or not. If false, output JSON string like:
+  // "'objectName' : {}". If true, then no outputs. This only happens when all
+  // the fields of the message are filtered out by field mask.
+  bool suppress_empty_object_;
 
   GOOGLE_DISALLOW_IMPLICIT_CONSTRUCTORS(ProtoStreamObjectSource);
 };

@@ -377,7 +377,7 @@ public abstract class CodedInputStream {
   /**
    * Set the maximum message recursion depth. In order to prevent malicious messages from causing
    * stack overflows, {@code CodedInputStream} limits how deeply messages may be nested. The default
-   * limit is 64.
+   * limit is 100.
    *
    * @return the old limit.
    */
@@ -2783,7 +2783,8 @@ public abstract class CodedInputStream {
                   sizeLimit - totalBytesRetired - bufferSize));
       if (bytesRead == 0 || bytesRead < -1 || bytesRead > buffer.length) {
         throw new IllegalStateException(
-            "InputStream#read(byte[]) returned invalid result: "
+            input.getClass()
+                + "#read(byte[]) returned invalid result: "
                 + bytesRead
                 + "\nThe InputStream implementation is buggy.");
       }
@@ -3005,20 +3006,54 @@ public abstract class CodedInputStream {
         throw InvalidProtocolBufferException.truncatedMessage();
       }
 
-      // Skipping more bytes than are in the buffer.  First skip what we have.
-      int tempPos = bufferSize - pos;
-      pos = bufferSize;
+      int totalSkipped = 0;
+      if (refillCallback == null) {
+        // Skipping more bytes than are in the buffer.  First skip what we have.
+        totalBytesRetired += pos;
+        totalSkipped = bufferSize - pos;
+        bufferSize = 0;
+        pos = 0;
 
-      // Keep refilling the buffer until we get to the point we wanted to skip to.
-      // This has the side effect of ensuring the limits are updated correctly.
-      refillBuffer(1);
-      while (size - tempPos > bufferSize) {
-        tempPos += bufferSize;
-        pos = bufferSize;
-        refillBuffer(1);
+        try {
+          while (totalSkipped < size) {
+            int toSkip = size - totalSkipped;
+            long skipped = input.skip(toSkip);
+            if (skipped < 0 || skipped > toSkip) {
+              throw new IllegalStateException(
+                  input.getClass()
+                      + "#skip returned invalid result: "
+                      + skipped
+                      + "\nThe InputStream implementation is buggy.");
+            } else if (skipped == 0) {
+              // The API contract of skip() permits an inputstream to skip zero bytes for any reason
+              // it wants. In particular, ByteArrayInputStream will just return zero over and over
+              // when it's at the end of its input. In order to actually confirm that we've hit the
+              // end of input, we need to issue a read call via the other path.
+              break;
+            }
+            totalSkipped += (int) skipped;
+          }
+        } finally {
+          totalBytesRetired += totalSkipped;
+          recomputeBufferSizeAfterLimit();
+        }
       }
+      if (totalSkipped < size) {
+        // Skipping more bytes than are in the buffer.  First skip what we have.
+        int tempPos = bufferSize - pos;
+        pos = bufferSize;
 
-      pos = size - tempPos;
+        // Keep refilling the buffer until we get to the point we wanted to skip to.
+        // This has the side effect of ensuring the limits are updated correctly.
+        refillBuffer(1);
+        while (size - tempPos > bufferSize) {
+          tempPos += bufferSize;
+          pos = bufferSize;
+          refillBuffer(1);
+        }
+
+        pos = size - tempPos;
+      }
     }
   }
 

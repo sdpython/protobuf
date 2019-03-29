@@ -29,6 +29,11 @@ var group1Protos = [
   'test5.proto',
   'commonjs/test6/test6.proto',
   'test8.proto',
+  'test11.proto',
+  'test12.proto',
+  'test13.proto',
+  'test14.proto',
+  'test15.proto',
   'testbinary.proto',
   'testempty.proto',
   'test.proto',
@@ -132,7 +137,7 @@ function getClosureBuilderCommand(exportsFile, outputFile) {
   return './node_modules/google-closure-library/closure/bin/build/closurebuilder.py ' +
   '--root node_modules ' +
   '-o compiled ' +
-  '--compiler_jar node_modules/google-closure-compiler/compiler.jar ' +
+  '--compiler_jar node_modules/google-closure-compiler-java/compiler.jar ' +
   '-i ' + exportsFile + ' ' +
   'map.js message.js binary/arith.js binary/constants.js binary/decoder.js ' +
   'binary/encoder.js binary/reader.js binary/utils.js binary/writer.js ' +

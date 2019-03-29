@@ -46,6 +46,7 @@
 #include <google/protobuf/wire_format.h>
 #include <google/protobuf/stubs/strutil.h>
 
+
 namespace google {
 namespace protobuf {
 namespace compiler {
@@ -55,13 +56,19 @@ using internal::WireFormat;
 using internal::WireFormatLite;
 
 namespace {
+bool EnableExperimentalRuntimeForLite() {
+#ifdef PROTOBUF_EXPERIMENT
+  return PROTOBUF_EXPERIMENT;
+#else   // PROTOBUF_EXPERIMENT
+  return false;
+#endif  // !PROTOBUF_EXPERIMENT
+}
 
 void SetPrimitiveVariables(const FieldDescriptor* descriptor,
-                           int messageBitIndex,
-                           int builderBitIndex,
+                           int messageBitIndex, int builderBitIndex,
                            const FieldGeneratorInfo* info,
                            ClassNameResolver* name_resolver,
-                           std::map<string, string>* variables) {
+                           std::map<std::string, std::string>* variables) {
   SetCommonFieldVariables(descriptor, info, variables);
   JavaType javaType = GetJavaType(descriptor);
   (*variables)["type"] = PrimitiveTypeName(javaType);
@@ -71,13 +78,13 @@ void SetPrimitiveVariables(const FieldDescriptor* descriptor,
   (*variables)["capitalized_type"] =
       GetCapitalizedType(descriptor, /* immutable = */ true);
   (*variables)["tag"] =
-      SimpleItoa(static_cast<int32>(WireFormat::MakeTag(descriptor)));
-  (*variables)["tag_size"] = SimpleItoa(
+      StrCat(static_cast<int32>(WireFormat::MakeTag(descriptor)));
+  (*variables)["tag_size"] = StrCat(
       WireFormat::TagSize(descriptor->number(), GetType(descriptor)));
   (*variables)["required"] = descriptor->is_required() ? "true" : "false";
 
-  string capitalized_type = UnderscoresToCamelCase(PrimitiveTypeName(javaType),
-                                                   true /* cap_next_letter */);
+  std::string capitalized_type = UnderscoresToCamelCase(
+      PrimitiveTypeName(javaType), true /* cap_next_letter */);
   switch (javaType) {
     case JAVATYPE_INT:
     case JAVATYPE_LONG:
@@ -131,7 +138,7 @@ void SetPrimitiveVariables(const FieldDescriptor* descriptor,
       ? "@java.lang.Deprecated " : "";
   int fixed_size = FixedSize(GetType(descriptor));
   if (fixed_size != -1) {
-    (*variables)["fixed_size"] = SimpleItoa(fixed_size);
+    (*variables)["fixed_size"] = StrCat(fixed_size);
   }
 
   if (SupportFieldPresence(descriptor->file())) {
@@ -186,7 +193,7 @@ ImmutablePrimitiveFieldLiteGenerator::ImmutablePrimitiveFieldLiteGenerator(
 ImmutablePrimitiveFieldLiteGenerator::~ImmutablePrimitiveFieldLiteGenerator() {}
 
 int ImmutablePrimitiveFieldLiteGenerator::GetNumBitsForMessage() const {
-  return 1;
+  return SupportFieldPresence(descriptor_->file()) ? 1 : 0;
 }
 
 void ImmutablePrimitiveFieldLiteGenerator::
@@ -459,7 +466,7 @@ GenerateHashCode(io::Printer* printer) const {
   }
 }
 
-string ImmutablePrimitiveFieldLiteGenerator::GetBoxedType() const {
+std::string ImmutablePrimitiveFieldLiteGenerator::GetBoxedType() const {
   return BoxedPrimitiveTypeName(GetJavaType(descriptor_));
 }
 
@@ -663,7 +670,7 @@ GenerateMembers(io::Printer* printer) const {
     "}\n");
   printer->Annotate("{", "}", descriptor_);
 
-  if (descriptor_->is_packed() &&
+  if (!EnableExperimentalRuntimeForLite() && descriptor_->is_packed() &&
       context_->HasGeneratedMethods(descriptor_->containing_type())) {
     printer->Print(variables_,
       "private int $name$MemoizedSerializedSize = -1;\n");
@@ -854,6 +861,8 @@ GenerateParsingDoneCode(io::Printer* printer) const {
 
 void RepeatedImmutablePrimitiveFieldLiteGenerator::
 GenerateSerializationCode(io::Printer* printer) const {
+  GOOGLE_CHECK(!EnableExperimentalRuntimeForLite());
+
   if (descriptor_->is_packed()) {
     // We invoke getSerializedSize in writeTo for messages that have packed
     // fields in ImmutableMessageGenerator::GenerateMessageSerializationMethods.
@@ -876,6 +885,8 @@ GenerateSerializationCode(io::Printer* printer) const {
 
 void RepeatedImmutablePrimitiveFieldLiteGenerator::
 GenerateSerializedSizeCode(io::Printer* printer) const {
+  GOOGLE_CHECK(!EnableExperimentalRuntimeForLite());
+
   printer->Print(variables_,
     "{\n"
     "  int dataSize = 0;\n");
@@ -933,7 +944,7 @@ GenerateHashCode(io::Printer* printer) const {
     "}\n");
 }
 
-string RepeatedImmutablePrimitiveFieldLiteGenerator::GetBoxedType() const {
+std::string RepeatedImmutablePrimitiveFieldLiteGenerator::GetBoxedType() const {
   return BoxedPrimitiveTypeName(GetJavaType(descriptor_));
 }
 

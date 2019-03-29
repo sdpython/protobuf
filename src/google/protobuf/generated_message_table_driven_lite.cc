@@ -36,7 +36,6 @@
 #include <google/protobuf/metadata_lite.h>
 #include <google/protobuf/repeated_field.h>
 #include <google/protobuf/wire_format_lite.h>
-#include <google/protobuf/wire_format_lite_inl.h>
 
 namespace google {
 namespace protobuf {
@@ -44,12 +43,16 @@ namespace internal {
 
 namespace {
 
-string* MutableUnknownFields(MessageLite* msg, int64 arena_offset) {
+std::string* MutableUnknownFields(MessageLite* msg, int64 arena_offset) {
   return Raw<InternalMetadataWithArenaLite>(msg, arena_offset)
       ->mutable_unknown_fields();
 }
 
 struct UnknownFieldHandlerLite {
+  // TODO(mvels): consider renaming UnknownFieldHandler to (TableDrivenTraits?),
+  // and conflating InternalMetaData into it, simplifying the template.
+  static constexpr bool IsLite() { return true; }
+
   static bool Skip(MessageLite* msg, const ParseTable& table,
                    io::CodedInputStream* input,
                    int tag) {
