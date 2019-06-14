@@ -56,20 +56,20 @@
 
 namespace google {
 namespace protobuf {
-  namespace io {
-    class CodedInputStream;         // coded_stream.h
-    class CodedOutputStream;        // coded_stream.h
-    class ZeroCopyInputStream;      // zero_copy_stream.h
-  }
-  namespace internal {
-    class InternalMetadataWithArena;  // metadata.h
-    class WireFormat;               // wire_format.h
-    class MessageSetFieldSkipperUsingCord;
-                                    // extension_set_heavy.cc
-  }
+namespace io {
+class CodedInputStream;     // coded_stream.h
+class CodedOutputStream;    // coded_stream.h
+class ZeroCopyInputStream;  // zero_copy_stream.h
+}  // namespace io
+namespace internal {
+class InternalMetadataWithArena;  // metadata.h
+class WireFormat;                 // wire_format.h
+class MessageSetFieldSkipperUsingCord;
+// extension_set_heavy.cc
+}  // namespace internal
 
-class Message;                      // message.h
-class UnknownField;                 // below
+class Message;       // message.h
+class UnknownField;  // below
 
 // An UnknownFieldSet contains fields that were encountered while parsing a
 // message but were not defined by its type.  Keeping track of these can be
@@ -125,9 +125,7 @@ class PROTOBUF_EXPORT UnknownFieldSet {
   // Version of SpaceUsed() including sizeof(*this).
   size_t SpaceUsedLong() const;
 
-  int SpaceUsed() const {
-    return internal::ToIntSize(SpaceUsedLong());
-  }
+  int SpaceUsed() const { return internal::ToIntSize(SpaceUsedLong()); }
 
   // Returns the number of fields present in the UnknownFieldSet.
   inline int field_count() const;
@@ -172,6 +170,7 @@ class PROTOBUF_EXPORT UnknownFieldSet {
   }
 
   static const UnknownFieldSet* default_instance();
+
  private:
   // For InternalMergeFrom
   friend class UnknownField;
@@ -197,13 +196,14 @@ inline void WriteLengthDelimited(uint32 num, StringPiece val,
 
 PROTOBUF_EXPORT
 const char* PackedEnumParser(void* object, const char* ptr, ParseContext* ctx,
-                             bool (*is_valid)(int), UnknownFieldSet* unknown,
-                             int field_num);
+                             bool (*is_valid)(int),
+                             InternalMetadataWithArena* unknown, int field_num);
 PROTOBUF_EXPORT
 const char* PackedEnumParserArg(void* object, const char* ptr,
                                 ParseContext* ctx,
                                 bool (*is_valid)(const void*, int),
-                                const void* data, UnknownFieldSet* unknown,
+                                const void* data,
+                                InternalMetadataWithArena* unknown,
                                 int field_num);
 
 PROTOBUF_EXPORT
@@ -302,9 +302,7 @@ inline void UnknownFieldSet::Clear() {
   }
 }
 
-inline bool UnknownFieldSet::empty() const {
-  return fields_.empty();
-}
+inline bool UnknownFieldSet::empty() const { return fields_.empty(); }
 
 inline void UnknownFieldSet::Swap(UnknownFieldSet* x) {
   fields_.swap(x->fields_);

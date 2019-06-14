@@ -31,6 +31,7 @@
 #ifndef GOOGLE_PROTOBUF_PARSE_CONTEXT_H__
 #define GOOGLE_PROTOBUF_PARSE_CONTEXT_H__
 
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -124,7 +125,7 @@ class PROTOBUF_EXPORT EpsCopyInputStream {
   // If return value is negative it's an error
   PROTOBUF_MUST_USE_RESULT int PushLimit(const char* ptr, int limit) {
     GOOGLE_DCHECK(limit >= 0);
-    limit += ptr - buffer_end_;
+    limit += static_cast<int>(ptr - buffer_end_);
     limit_end_ = buffer_end_ + (std::min)(0, limit);
     auto old_limit = limit_;
     limit_ = limit;
@@ -190,6 +191,9 @@ class PROTOBUF_EXPORT EpsCopyInputStream {
     return ptr > limit_end_ &&
            (next_chunk_ == nullptr || ptr - buffer_end_ > limit_);
   }
+  // Returns true if more data is available, if false is returned one has to
+  // call Done for further checks.
+  bool DataAvailable(const char* ptr) { return ptr < limit_end_; }
 
  protected:
   // Returns true is limit (either an explicit limit or end of stream) is
@@ -206,6 +210,7 @@ class PROTOBUF_EXPORT EpsCopyInputStream {
   }
 
   const char* InitFrom(StringPiece flat) {
+    overall_limit_ = 0;
     if (flat.size() > kSlopBytes) {
       limit_ = kSlopBytes;
       limit_end_ = buffer_end_ = flat.end() - kSlopBytes;
@@ -228,6 +233,7 @@ class PROTOBUF_EXPORT EpsCopyInputStream {
   const char* InitFrom(io::ZeroCopyInputStream* zcis);
 
   const char* InitFrom(io::ZeroCopyInputStream* zcis, int limit) {
+    overall_limit_ = limit;
     auto res = InitFrom(zcis);
     limit_ = limit - static_cast<int>(buffer_end_ - res);
     limit_end_ = buffer_end_ + (std::min)(0, limit_);
@@ -258,6 +264,7 @@ class PROTOBUF_EXPORT EpsCopyInputStream {
   // the ParseContext, but case 2 is most easily and optimally implemented in
   // DoneFallback.
   uint32 last_tag_minus_1_ = 0;
+  int overall_limit_ = INT_MAX;  // Overall limit independent of pushed limits.
 
   std::pair<const char*, bool> DoneFallback(const char* ptr, int d);
   const char* Next(int overrun, int d);
@@ -711,11 +718,11 @@ PROTOBUF_EXPORT PROTOBUF_MUST_USE_RESULT const char* PackedEnumParser(
     void* object, const char* ptr, ParseContext* ctx);
 PROTOBUF_EXPORT PROTOBUF_MUST_USE_RESULT const char* PackedEnumParser(
     void* object, const char* ptr, ParseContext* ctx, bool (*is_valid)(int),
-    std::string* unknown, int field_num);
+    InternalMetadataWithArenaLite* metadata, int field_num);
 PROTOBUF_EXPORT PROTOBUF_MUST_USE_RESULT const char* PackedEnumParserArg(
     void* object, const char* ptr, ParseContext* ctx,
-    bool (*is_valid)(const void*, int), const void* data, std::string* unknown,
-    int field_num);
+    bool (*is_valid)(const void*, int), const void* data,
+    InternalMetadataWithArenaLite* metadata, int field_num);
 
 PROTOBUF_EXPORT PROTOBUF_MUST_USE_RESULT const char* PackedBoolParser(
     void* object, const char* ptr, ParseContext* ctx);

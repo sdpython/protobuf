@@ -464,6 +464,20 @@ public class JsonFormatTest extends TestCase {
     assertEquals(NullValue.NULL_VALUE, message.getOneofNullValue());
   }
 
+  public void testNullFirstInDuplicateOneof() throws Exception {
+    TestOneof.Builder builder = TestOneof.newBuilder();
+    mergeFromJson("{\"oneofNestedMessage\": null, \"oneofInt32\": 1}", builder);
+    TestOneof message = builder.build();
+    assertEquals(1, message.getOneofInt32());
+  }
+
+  public void testNullLastInDuplicateOneof() throws Exception {
+    TestOneof.Builder builder = TestOneof.newBuilder();
+    mergeFromJson("{\"oneofInt32\": 1, \"oneofNestedMessage\": null}", builder);
+    TestOneof message = builder.build();
+    assertEquals(1, message.getOneofInt32());
+  }
+
   public void testParserRejectDuplicatedFields() throws Exception {
     // TODO(xiaofeng): The parser we are currently using (GSON) will accept and keep the last
     // one if multiple entries have the same name. This is not the desired behavior but it can

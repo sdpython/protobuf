@@ -50,6 +50,8 @@ import com.google.protobuf.UnittestLite.TestHugeFieldNumbersLite;
 import com.google.protobuf.UnittestLite.TestNestedExtensionLite;
 import map_lite_test.MapTestProto.TestMap;
 import map_lite_test.MapTestProto.TestMap.MessageValue;
+import protobuf_unittest.NestedExtensionLite;
+import protobuf_unittest.NonNestedExtensionLite;
 import protobuf_unittest.lite_equals_and_hash.LiteEqualsAndHash.Bar;
 import protobuf_unittest.lite_equals_and_hash.LiteEqualsAndHash.BarPrime;
 import protobuf_unittest.lite_equals_and_hash.LiteEqualsAndHash.Foo;
@@ -97,7 +99,7 @@ public class LiteTest extends TestCase {
         TestAllTypesLite.newBuilder()
             .setOptionalInt32(123)
             .addRepeatedString("hello")
-            .setOptionalNestedMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(7))
+            .setOptionalNestedMessage(NestedMessage.newBuilder().setBb(7))
             .build();
 
     ByteString data = message.toByteString();
@@ -133,11 +135,10 @@ public class LiteTest extends TestCase {
         TestAllExtensionsLite.newBuilder()
             .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
             .addExtension(UnittestLite.repeatedStringExtensionLite, "hello")
-            .setExtension(
-                UnittestLite.optionalNestedEnumExtensionLite, TestAllTypesLite.NestedEnum.BAZ)
+            .setExtension(UnittestLite.optionalNestedEnumExtensionLite, NestedEnum.BAZ)
             .setExtension(
                 UnittestLite.optionalNestedMessageExtensionLite,
-                TestAllTypesLite.NestedMessage.newBuilder().setBb(7).build())
+                NestedMessage.newBuilder().setBb(7).build())
             .build();
 
     // Test copying a message, since coping extensions actually does use a
@@ -150,8 +151,7 @@ public class LiteTest extends TestCase {
     assertEquals(1, message2.getExtension(UnittestLite.repeatedStringExtensionLite).size());
     assertEquals("hello", message2.getExtension(UnittestLite.repeatedStringExtensionLite, 0));
     assertEquals(
-        TestAllTypesLite.NestedEnum.BAZ,
-        message2.getExtension(UnittestLite.optionalNestedEnumExtensionLite));
+        NestedEnum.BAZ, message2.getExtension(UnittestLite.optionalNestedEnumExtensionLite));
     assertEquals(7, message2.getExtension(UnittestLite.optionalNestedMessageExtensionLite).getBb());
   }
 
@@ -1375,13 +1375,15 @@ public class LiteTest extends TestCase {
     proto =
         TestAllTypesLite.newBuilder()
             .setOptionalBool(true)
-            .setOptionalNestedEnum(TestAllTypesLite.NestedEnum.BAZ)
+            .setOptionalNestedEnum(NestedEnum.BAZ)
             .build();
-    assertToStringEquals("optional_bool: true\noptional_nested_enum: BAZ", proto);
+    assertToStringEquals(
+        "optional_bool: true\noptional_nested_enum: " + NestedEnum.BAZ.toString(), proto);
 
     proto = TestAllTypesLite.newBuilder().setOptionalFloat(2.72f).setOptionalDouble(3.14).build();
     assertToStringEquals("optional_double: 3.14\noptional_float: 2.72", proto);
   }
+
 
   public void testToStringStringFields() throws Exception {
     TestAllTypesLite proto =
@@ -1395,13 +1397,13 @@ public class LiteTest extends TestCase {
   public void testToStringNestedMessage() throws Exception {
     TestAllTypesLite proto =
         TestAllTypesLite.newBuilder()
-            .setOptionalNestedMessage(TestAllTypesLite.NestedMessage.getDefaultInstance())
+            .setOptionalNestedMessage(NestedMessage.getDefaultInstance())
             .build();
     assertToStringEquals("optional_nested_message {\n}", proto);
 
     proto =
         TestAllTypesLite.newBuilder()
-            .setOptionalNestedMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(7))
+            .setOptionalNestedMessage(NestedMessage.newBuilder().setBb(7))
             .build();
     assertToStringEquals("optional_nested_message {\n  bb: 7\n}", proto);
   }
@@ -1417,8 +1419,8 @@ public class LiteTest extends TestCase {
 
     proto =
         TestAllTypesLite.newBuilder()
-            .addRepeatedLazyMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(7))
-            .addRepeatedLazyMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(8))
+            .addRepeatedLazyMessage(NestedMessage.newBuilder().setBb(7))
+            .addRepeatedLazyMessage(NestedMessage.newBuilder().setBb(8))
             .build();
     assertToStringEquals(
         "repeated_lazy_message {\n  bb: 7\n}\nrepeated_lazy_message {\n  bb: 8\n}", proto);
@@ -1431,7 +1433,10 @@ public class LiteTest extends TestCase {
             .setOptionalForeignMessage(ForeignMessageLite.newBuilder().setC(3))
             .build();
     assertToStringEquals(
-        "optional_foreign_enum: FOREIGN_LITE_BAR\noptional_foreign_message {\n  c: 3\n}", proto);
+        "optional_foreign_enum: "
+            + ForeignEnumLite.FOREIGN_LITE_BAR
+            + "\noptional_foreign_message {\n  c: 3\n}",
+        proto);
   }
 
   public void testToStringExtensions() throws Exception {
@@ -1440,11 +1445,10 @@ public class LiteTest extends TestCase {
             .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
             .addExtension(UnittestLite.repeatedStringExtensionLite, "spam")
             .addExtension(UnittestLite.repeatedStringExtensionLite, "eggs")
-            .setExtension(
-                UnittestLite.optionalNestedEnumExtensionLite, TestAllTypesLite.NestedEnum.BAZ)
+            .setExtension(UnittestLite.optionalNestedEnumExtensionLite, NestedEnum.BAZ)
             .setExtension(
                 UnittestLite.optionalNestedMessageExtensionLite,
-                TestAllTypesLite.NestedMessage.newBuilder().setBb(7).build())
+                NestedMessage.newBuilder().setBb(7).build())
             .build();
     assertToStringEquals(
         "[1]: 123\n[18] {\n  bb: 7\n}\n[21]: 3\n[44]: \"spam\"\n[44]: \"eggs\"", message);
@@ -1456,11 +1460,10 @@ public class LiteTest extends TestCase {
             .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
             .addExtension(UnittestLite.repeatedStringExtensionLite, "spam")
             .addExtension(UnittestLite.repeatedStringExtensionLite, "eggs")
-            .setExtension(
-                UnittestLite.optionalNestedEnumExtensionLite, TestAllTypesLite.NestedEnum.BAZ)
+            .setExtension(UnittestLite.optionalNestedEnumExtensionLite, NestedEnum.BAZ)
             .setExtension(
                 UnittestLite.optionalNestedMessageExtensionLite,
-                TestAllTypesLite.NestedMessage.newBuilder().setBb(7).build())
+                NestedMessage.newBuilder().setBb(7).build())
             .build();
     TestAllExtensionsLite messageWithUnknownFields =
         TestAllExtensionsLite.parseFrom(messageWithExtensions.toByteArray());
@@ -1609,13 +1612,12 @@ public class LiteTest extends TestCase {
 
   public void testMergeFromNoLazyFieldSharing() throws Exception {
     TestAllTypesLite.Builder sourceBuilder =
-        TestAllTypesLite.newBuilder()
-            .setOptionalLazyMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(1));
+        TestAllTypesLite.newBuilder().setOptionalLazyMessage(NestedMessage.newBuilder().setBb(1));
     TestAllTypesLite.Builder targetBuilder =
         TestAllTypesLite.newBuilder().mergeFrom(sourceBuilder.build());
     assertEquals(1, sourceBuilder.getOptionalLazyMessage().getBb());
     // now change the sourceBuilder, and target value shouldn't be affected.
-    sourceBuilder.setOptionalLazyMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(2));
+    sourceBuilder.setOptionalLazyMessage(NestedMessage.newBuilder().setBb(2));
     assertEquals(1, targetBuilder.getOptionalLazyMessage().getBb());
   }
 
@@ -2113,7 +2115,7 @@ public class LiteTest extends TestCase {
         TestAllTypesLite.newBuilder()
             .setOptionalInt32(123)
             .addRepeatedString("hello")
-            .setOptionalNestedMessage(TestAllTypesLite.NestedMessage.newBuilder().setBb(7))
+            .setOptionalNestedMessage(NestedMessage.newBuilder().setBb(7))
             .build();
 
     TestAllTypesLite copy =
@@ -2148,11 +2150,10 @@ public class LiteTest extends TestCase {
         TestAllExtensionsLite.newBuilder()
             .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
             .addExtension(UnittestLite.repeatedStringExtensionLite, "hello")
-            .setExtension(
-                UnittestLite.optionalNestedEnumExtensionLite, TestAllTypesLite.NestedEnum.BAZ)
+            .setExtension(UnittestLite.optionalNestedEnumExtensionLite, NestedEnum.BAZ)
             .setExtension(
                 UnittestLite.optionalNestedMessageExtensionLite,
-                TestAllTypesLite.NestedMessage.newBuilder().setBb(7).build())
+                NestedMessage.newBuilder().setBb(7).build())
             .build();
 
     ExtensionRegistryLite registry = ExtensionRegistryLite.newInstance();
@@ -2336,6 +2337,26 @@ public class LiteTest extends TestCase {
       assertEquals("Element at index 0 is null.", expected.getMessage());
       assertEquals(0, builder.getRepeatedNestedMessageCount());
     }
+  }
+
+  public void testExtensionRenamesKeywords() {
+    assertTrue(NonNestedExtensionLite.package_ instanceof GeneratedMessageLite.GeneratedExtension);
+    assertTrue(
+        NestedExtensionLite.MyNestedExtensionLite.private_
+            instanceof GeneratedMessageLite.GeneratedExtension);
+
+    NonNestedExtensionLite.MessageLiteToBeExtended msg =
+        NonNestedExtensionLite.MessageLiteToBeExtended.newBuilder()
+            .setExtension(NonNestedExtensionLite.package_, true)
+            .build();
+    assertTrue(msg.getExtension(NonNestedExtensionLite.package_));
+
+    msg =
+        NonNestedExtensionLite.MessageLiteToBeExtended.newBuilder()
+            .setExtension(NestedExtensionLite.MyNestedExtensionLite.private_, 2.4)
+            .build();
+    assertEquals(
+        2.4, msg.getExtension(NestedExtensionLite.MyNestedExtensionLite.private_), 0.001);
   }
 
   private static final class OneTimeIterableList<T> extends ArrayList<T> {

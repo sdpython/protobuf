@@ -82,8 +82,8 @@ bool ParseEndsInSlopRegion(const char* begin, int overrun, int d) {
         d++;
         break;
       }
-      case 4: {                     // end group
-        if (--d < 0) return true;   // We exit early
+      case 4: {                    // end group
+        if (--d < 0) return true;  // We exit early
         break;
       }
       case 5: {  // fixed32
@@ -114,11 +114,13 @@ const char* EpsCopyInputStream::Next(int overrun, int d) {
   // Note we must use memmove because the previous buffer could be part of
   // buffer_.
   std::memmove(buffer_, buffer_end_, kSlopBytes);
-  if (zcis_ && (d < 0 || !ParseEndsInSlopRegion(buffer_, overrun, d))) {
+  if (overall_limit_ > 0 &&
+      (d < 0 || !ParseEndsInSlopRegion(buffer_, overrun, d))) {
     const void* data;
     // ZeroCopyInputStream indicates Next may return 0 size buffers. Hence
     // we loop.
     while (zcis_->Next(&data, &size_)) {
+      overall_limit_ -= size_;
       if (size_ > kSlopBytes) {
         // We got a large chunk
         std::memcpy(buffer_ + kSlopBytes, data, kSlopBytes);
@@ -135,6 +137,7 @@ const char* EpsCopyInputStream::Next(int overrun, int d) {
       }
       GOOGLE_DCHECK(size_ == 0) << size_;
     }
+    overall_limit_ = 0;  // Next failed, no more needs for next
   }
   // End of stream or array
   if (aliasing_ == kNoDelta) {
@@ -260,6 +263,7 @@ const char* EpsCopyInputStream::InitFrom(io::ZeroCopyInputStream* zcis) {
   int size;
   limit_ = INT_MAX;
   if (zcis->Next(&data, &size)) {
+    overall_limit_ -= size;
     if (size > kSlopBytes) {
       auto ptr = static_cast<const char*>(data);
       limit_ -= size - kSlopBytes;
@@ -275,6 +279,7 @@ const char* EpsCopyInputStream::InitFrom(io::ZeroCopyInputStream* zcis) {
       return ptr;
     }
   }
+  overall_limit_ = 0;
   next_chunk_ = nullptr;
   size_ = 0;
   limit_end_ = buffer_end_ = buffer_;
@@ -322,7 +327,8 @@ std::pair<const char*, uint32> ReadTagFallback(const char* p, uint32 res) {
   return {nullptr, 0};
 }
 
-std::pair<const char*, uint64> ParseVarint64Fallback(const char* p, uint64 res) {
+std::pair<const char*, uint64> ParseVarint64Fallback(const char* p,
+                                                     uint64 res) {
   return ParseVarint64FallbackInline(p, res);
 }
 
@@ -415,14 +421,15 @@ const char* PackedEnumParser(void* object, const char* ptr, ParseContext* ctx) {
 }
 
 const char* PackedEnumParser(void* object, const char* ptr, ParseContext* ctx,
-                             bool (*is_valid)(int), std::string* unknown,
+                             bool (*is_valid)(int),
+                             InternalMetadataWithArenaLite* metadata,
                              int field_num) {
   return ctx->ReadPackedVarint(
-      ptr, [object, is_valid, unknown, field_num](uint64 val) {
+      ptr, [object, is_valid, metadata, field_num](uint64 val) {
         if (is_valid(val)) {
           static_cast<RepeatedField<int>*>(object)->Add(val);
         } else {
-          WriteVarint(field_num, val, unknown);
+          WriteVarint(field_num, val, metadata->mutable_unknown_fields());
         }
       });
 }
@@ -430,14 +437,15 @@ const char* PackedEnumParser(void* object, const char* ptr, ParseContext* ctx,
 const char* PackedEnumParserArg(void* object, const char* ptr,
                                 ParseContext* ctx,
                                 bool (*is_valid)(const void*, int),
-                                const void* data, std::string* unknown,
+                                const void* data,
+                                InternalMetadataWithArenaLite* metadata,
                                 int field_num) {
   return ctx->ReadPackedVarint(
-      ptr, [object, is_valid, data, unknown, field_num](uint64 val) {
+      ptr, [object, is_valid, data, metadata, field_num](uint64 val) {
         if (is_valid(data, val)) {
           static_cast<RepeatedField<int>*>(object)->Add(val);
         } else {
-          WriteVarint(field_num, val, unknown);
+          WriteVarint(field_num, val, metadata->mutable_unknown_fields());
         }
       });
 }

@@ -32,6 +32,8 @@
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
 
+#include <google/protobuf/compiler/cpp/cpp_helpers.h>
+
 #include <functional>
 #include <limits>
 #include <map>
@@ -39,9 +41,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/common.h>
-#include <google/protobuf/compiler/cpp/cpp_helpers.h>
+#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/descriptor.h>
 
 #include <google/protobuf/compiler/scc.h>
@@ -55,7 +56,6 @@
 
 #include <google/protobuf/stubs/hash.h>
 
-
 #include <google/protobuf/port_def.inc>
 
 namespace google {
@@ -67,7 +67,6 @@ namespace {
 
 static const char kAnyMessageName[] = "Any";
 static const char kAnyProtoFile[] = "google/protobuf/any.proto";
-static const char kGoogleProtobufPrefix[] = "google/protobuf/";
 
 std::string DotsToColons(const std::string& name) {
   return StringReplace(name, ".", "::", true);
@@ -167,20 +166,6 @@ static std::unordered_set<std::string>* MakeKeywordsMap() {
 }
 
 static std::unordered_set<std::string>& kKeywords = *MakeKeywordsMap();
-
-// Returns whether the provided descriptor has an extension. This includes its
-// nested types.
-bool HasExtension(const Descriptor* descriptor) {
-  if (descriptor->extension_count() > 0) {
-    return true;
-  }
-  for (int i = 0; i < descriptor->nested_type_count(); ++i) {
-    if (HasExtension(descriptor->nested_type(i))) {
-      return true;
-    }
-  }
-  return false;
-}
 
 // Encode [0..63] as 'A'-'Z', 'a'-'z', '0'-'9', '_'
 char Base63Char(int value) {
@@ -358,8 +343,10 @@ std::string Namespace(const FileDescriptor* d, const Options& options) {
   if (IsWellKnownMessage(d) && options.opensource_runtime) {
     // Written with string concatenation to prevent rewriting of
     // ::google::protobuf.
-    ret = StringReplace(ret, "::google::" "protobuf", "PROTOBUF_NAMESPACE_ID",
-                        false);
+    ret = StringReplace(ret,
+                        "::google::"
+                        "protobuf",
+                        "PROTOBUF_NAMESPACE_ID", false);
   }
   return ret;
 }
@@ -376,11 +363,29 @@ std::string Namespace(const EnumDescriptor* d, const Options& options) {
   return Namespace(d->file(), options);
 }
 
+std::string DefaultInstanceType(const Descriptor* descriptor,
+                                const Options& options) {
+  return ClassName(descriptor) + "DefaultTypeInternal";
+}
+
 std::string DefaultInstanceName(const Descriptor* descriptor,
                                 const Options& options) {
+  return "_" + ClassName(descriptor, false) + "_default_instance_";
+}
+
+std::string QualifiedDefaultInstanceName(const Descriptor* descriptor,
+                                         const Options& options) {
   return QualifiedFileLevelSymbol(
-      descriptor->file(),
-      "_" + ClassName(descriptor, false) + "_default_instance_", options);
+      descriptor->file(), DefaultInstanceName(descriptor, options), options);
+}
+
+std::string DescriptorTableName(const FileDescriptor* file,
+                                const Options& options) {
+  return UniqueName("descriptor_table", file, options);
+}
+
+std::string FileDllExport(const FileDescriptor* file, const Options& options) {
+  return UniqueName("PROTOBUF_INTERNAL_EXPORT", file, options);
 }
 
 std::string ReferenceFunctionName(const Descriptor* descriptor,
@@ -1123,6 +1128,8 @@ bool IsImplicitWeakField(const FieldDescriptor* field, const Options& options,
          !field->is_required() && !field->is_map() &&
          field->containing_oneof() == nullptr &&
          !IsWellKnownMessage(field->message_type()->file()) &&
+         field->message_type()->file()->name() !=
+             "net/proto2/proto/descriptor.proto" &&
          // We do not support implicit weak fields between messages in the same
          // strongly-connected component.
          scc_analyzer->GetSCC(field->containing_type()) !=
@@ -1230,7 +1237,7 @@ void ListAllTypesForServices(const FileDescriptor* fd,
 
 bool GetBootstrapBasename(const Options& options, const std::string& basename,
                           std::string* bootstrap_basename) {
-  if (options.opensource_runtime || options.lite_implicit_weak_fields) {
+  if (options.opensource_runtime) {
     return false;
   }
 
@@ -1334,23 +1341,20 @@ bool MaybeBootstrap(const Options& options, GeneratorContext* generator_context,
   }
 }
 
-bool ShouldRepeat(const FieldDescriptor* descriptor,
-                  internal::WireFormatLite::WireType wiretype) {
-  return descriptor->is_repeated() &&
-         (!descriptor->is_packable() ||
-          wiretype != internal::WireFormatLite::WIRETYPE_LENGTH_DELIMITED);
-}
-
 class ParseLoopGenerator {
  public:
-  ParseLoopGenerator(const Options& options, MessageSCCAnalyzer* scc_analyzer,
-                     io::Printer* printer)
-      : scc_analyzer_(scc_analyzer), options_(options), format_(printer) {}
+  ParseLoopGenerator(int num_hasbits, const Options& options,
+                     MessageSCCAnalyzer* scc_analyzer, io::Printer* printer)
+      : scc_analyzer_(scc_analyzer),
+        options_(options),
+        format_(printer),
+        num_hasbits_(num_hasbits) {}
 
   void GenerateParserLoop(const Descriptor* descriptor) {
     format_.Set("classname", ClassName(descriptor));
     format_.Set("p_ns", "::" + ProtobufNamespace(options_));
-    format_.Set("pi_ns", StrCat("::", ProtobufNamespace(options_), "::internal"));
+    format_.Set("pi_ns",
+                StrCat("::", ProtobufNamespace(options_), "::internal"));
     format_.Set("GOOGLE_PROTOBUF", MacroPrefix(options_));
     std::map<std::string, std::string> vars;
     SetCommonVars(options_, &vars);
@@ -1358,9 +1362,6 @@ class ParseLoopGenerator {
 
     std::vector<const FieldDescriptor*> ordered_fields;
     for (auto field : FieldRange(descriptor)) {
-      if (IsProto1(descriptor->file(), options_)) {
-        if (field->number() >= (1 << 14)) continue;
-      }
       ordered_fields.push_back(field);
     }
     std::sort(ordered_fields.begin(), ordered_fields.end(),
@@ -1370,20 +1371,43 @@ class ParseLoopGenerator {
 
     format_(
         "const char* $classname$::_InternalParse(const char* ptr, "
-        "$pi_ns$::ParseContext* ctx) {\n");
+        "$pi_ns$::ParseContext* ctx) {\n"
+        "#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure\n");
     format_.Indent();
+    int hasbits_size = 0;
+    if (HasFieldPresence(descriptor->file())) {
+      hasbits_size = (num_hasbits_ + 31) / 32;
+    }
+    // For now only optimize small hasbits.
+    if (hasbits_size != 1) hasbits_size = 0;
+    if (hasbits_size) {
+      format_("_Internal::HasBits has_bits{};\n");
+      format_.Set("has_bits", "has_bits");
+    } else {
+      format_.Set("has_bits", "_has_bits_");
+    }
+
     if (descriptor->file()->options().cc_enable_arenas()) {
       format_("$p_ns$::Arena* arena = GetArenaNoVirtual(); (void)arena;\n");
     }
     GenerateParseLoop(descriptor, ordered_fields);
     format_.Outdent();
-    format_("}\n");
+    format_("success:\n");
+    if (hasbits_size) format_("  _has_bits_.Or(has_bits);\n");
+    format_(
+        "  return ptr;\n"
+        "failure:\n"
+        "  ptr = nullptr;\n"
+        "  goto success;\n"
+        "#undef CHK_\n"
+        "}\n");
   }
 
  private:
   MessageSCCAnalyzer* scc_analyzer_;
   const Options& options_;
   Formatter format_;
+  int num_hasbits_;
 
   using WireFormat = internal::WireFormat;
   using WireFormatLite = internal::WireFormatLite;
@@ -1396,7 +1420,7 @@ class ParseLoopGenerator {
       field_name = ", kFieldName";
     }
     if (HasFieldPresence(field->file())) {
-      format_("HasBitSetters::set_has_$1$(this);\n", FieldName(field));
+      format_("_Internal::set_has_$1$(&$has_bits$);\n", FieldName(field));
     }
     string default_string =
         field->default_value_string().empty()
@@ -1432,18 +1456,12 @@ class ParseLoopGenerator {
     if (!options_.opensource_runtime) {
       // Open source doesn't support other ctypes;
       ctype = field->options().ctype();
-      if (IsProto1(field->file(), options_) &&
-          ctype == FieldOptions::STRING_PIECE) {
-        // proto1 doesn't support STRING_PIECE
-        ctype = FieldOptions::STRING;
-      }
     }
     if (field->file()->options().cc_enable_arenas() && !field->is_repeated() &&
         !options_.opensource_runtime &&
         GetOptimizeFor(field->file(), options_) != FileOptions::LITE_RUNTIME &&
         // For now only use arena string for strings with empty defaults.
         field->default_value_string().empty() &&
-        !IsProto1(field->file(), options_) &&
         !IsStringInlined(field, options_) &&
         field->containing_oneof() == nullptr && ctype == FieldOptions::STRING) {
       GenerateArenaString(field, utf8, field_name);
@@ -1461,37 +1479,25 @@ class ParseLoopGenerator {
         name = "StringPieceParser" + utf8;
         break;
     }
-    format_(
-        "ptr = $pi_ns$::Inline$1$($2$_$3$(), ptr, ctx$4$);\n",
-        name, field->is_repeated() && !field->is_packable() ? "add" : "mutable",
-        FieldName(field), field_name);
+    format_("ptr = $pi_ns$::Inline$1$($2$_$3$(), ptr, ctx$4$);\n", name,
+            field->is_repeated() && !field->is_packable() ? "add" : "mutable",
+            FieldName(field), field_name);
   }
 
   void GenerateLengthDelim(const FieldDescriptor* field) {
-    if (!IsProto1(field->file(), options_) && field->is_packable()) {
+    if (field->is_packable()) {
       std::string enum_validator;
       if (field->type() == FieldDescriptor::TYPE_ENUM &&
           !HasPreservingUnknownEnumSemantics(field)) {
-        enum_validator = StrCat(
-            ", ", QualifiedClassName(field->enum_type(), options_),
-            "_IsValid, mutable_unknown_fields(), ", field->number());
+        enum_validator =
+            StrCat(", ", QualifiedClassName(field->enum_type(), options_),
+                         "_IsValid, &_internal_metadata_, ", field->number());
       }
-      format_(
-          "ptr = $pi_ns$::Packed$1$Parser(mutable_$2$(), ptr, ctx$3$);\n",
-          DeclaredTypeMethodName(field->type()), FieldName(field),
-          enum_validator);
+      format_("ptr = $pi_ns$::Packed$1$Parser(mutable_$2$(), ptr, ctx$3$);\n",
+              DeclaredTypeMethodName(field->type()), FieldName(field),
+              enum_validator);
     } else {
       auto field_type = field->type();
-      if (IsProto1(field->file(), options_)) {
-        if (field->is_packable()) {
-          // Sigh ... packed fields endup as a string in proto1
-          field_type = FieldDescriptor::TYPE_BYTES;
-        }
-        if (field_type == FieldDescriptor::TYPE_STRING) {
-          // In proto1 strings are treated as bytes
-          field_type = FieldDescriptor::TYPE_BYTES;
-        }
-      }
       switch (field_type) {
         case FieldDescriptor::TYPE_STRING:
           GenerateStrings(field, true /* utf8 */);
@@ -1500,7 +1506,7 @@ class ParseLoopGenerator {
           GenerateStrings(field, false /* utf8 */);
           break;
         case FieldDescriptor::TYPE_MESSAGE: {
-          if (!IsProto1(field->file(), options_) && field->is_map()) {
+          if (field->is_map()) {
             const FieldDescriptor* val =
                 field->message_type()->FindFieldByName("value");
             GOOGLE_CHECK(val);
@@ -1516,8 +1522,7 @@ class ParseLoopGenerator {
               format_("ptr = ctx->ParseMessage(&$1$_, ptr);\n",
                       FieldName(field));
             }
-          } else if (!IsProto1(field->file(), options_) &&
-                     IsLazy(field, options_)) {
+          } else if (IsLazy(field, options_)) {
             if (field->containing_oneof() != nullptr) {
               format_(
                   "if (!has_$1$()) {\n"
@@ -1531,17 +1536,17 @@ class ParseLoopGenerator {
                   FieldName(field), field->containing_oneof()->name());
             } else if (HasFieldPresence(field->file())) {
               format_(
-                  "HasBitSetters::set_has_$1$(this);\n"
+                  "_Internal::set_has_$1$(&$has_bits$);\n"
                   "ptr = ctx->ParseMessage(&$1$_, ptr);\n",
                   FieldName(field));
             } else {
-              format_(
-                  "ptr = ctx->ParseMessage(&$1$_, ptr);\n", FieldName(field));
+              format_("ptr = ctx->ParseMessage(&$1$_, ptr);\n",
+                      FieldName(field));
             }
           } else if (IsImplicitWeakField(field, options_, scc_analyzer_)) {
             if (!field->is_repeated()) {
               format_(
-                  "ptr = ctx->ParseMessage(HasBitSetters::mutable_$1$(this), "
+                  "ptr = ctx->ParseMessage(_Internal::mutable_$1$(this), "
                   "ptr);\n",
                   FieldName(field));
             } else {
@@ -1554,18 +1559,10 @@ class ParseLoopGenerator {
                   ClassName(field->message_type()));
             }
           } else if (IsWeak(field, options_)) {
-            if (IsProto1(field->file(), options_)) {
-              format_(
-                  "ptr = ctx->ParseMessage("
-                  "reinterpret_cast<$p_ns$::MessageLite*>(internal_mutable_$1$("
-                  ")), ptr);\n",
-                  FieldName(field));
-            } else {
-              format_(
-                  "ptr = ctx->ParseMessage(_weak_field_map_.MutableMessage($1$,"
-                  " _$classname$_default_instance_.$2$_), ptr);\n",
-                  field->number(), FieldName(field));
-            }
+            format_(
+                "ptr = ctx->ParseMessage(_weak_field_map_.MutableMessage($1$,"
+                " _$classname$_default_instance_.$2$_), ptr);\n",
+                field->number(), FieldName(field));
           } else {
             format_("ptr = ctx->ParseMessage($1$_$2$(), ptr);\n",
                     field->is_repeated() ? "add" : "mutable", FieldName(field));
@@ -1579,68 +1576,104 @@ class ParseLoopGenerator {
     }
   }
 
-  void GenerateCaseBody(internal::WireFormatLite::WireType wiretype,
-                        const FieldDescriptor* field) {
-    if (ShouldRepeat(field, wiretype)) {
-      format_("do {\n");
-      format_.Indent();
-    }
+  // Convert a 1 or 2 byte varint into the equivalent value upon a direct load.
+  static uint32 SmallVarintValue(uint32 x) {
+    GOOGLE_DCHECK(x < 128 * 128);
+    if (x >= 128) x += (x & 0xFF80) + 128;
+    return x;
+  }
+
+  static bool ShouldRepeat(const FieldDescriptor* descriptor,
+                           internal::WireFormatLite::WireType wiretype) {
+    constexpr int kMaxTwoByteFieldNumber = 16 * 128;
+    return descriptor->number() < kMaxTwoByteFieldNumber &&
+           descriptor->is_repeated() &&
+           (!descriptor->is_packable() ||
+            wiretype != internal::WireFormatLite::WIRETYPE_LENGTH_DELIMITED);
+  }
+
+  void GenerateFieldBody(internal::WireFormatLite::WireType wiretype,
+                         const FieldDescriptor* field) {
+    uint32 tag = WireFormatLite::MakeTag(field->number(), wiretype);
     switch (wiretype) {
       case WireFormatLite::WIRETYPE_VARINT: {
         std::string type = PrimitiveTypeName(options_, field->cpp_type());
         std::string prefix = field->is_repeated() ? "add" : "set";
-        if (field->type() == FieldDescriptor::TYPE_ENUM &&
-            !IsProto1(field->file(), options_)) {
+        if (field->type() == FieldDescriptor::TYPE_ENUM) {
           format_(
               "$uint64$ val = $pi_ns$::ReadVarint(&ptr);\n"
-              "$GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr);\n");
+              "CHK_(ptr);\n");
           if (!HasPreservingUnknownEnumSemantics(field)) {
-            format_(
-                "if (!$1$_IsValid(val)) {\n"
-                "  $pi_ns$::WriteVarint($2$, val, "
-                "mutable_unknown_fields());\n"
-                "  break;\n"
-                "}\n",
-                QualifiedClassName(field->enum_type(), options_),
-                field->number());
+            format_("if (PROTOBUF_PREDICT_TRUE($1$_IsValid(val))) {\n",
+                    QualifiedClassName(field->enum_type(), options_));
+            format_.Indent();
           }
           format_("$1$_$2$(static_cast<$3$>(val));\n", prefix, FieldName(field),
                   QualifiedClassName(field->enum_type(), options_));
+          if (!HasPreservingUnknownEnumSemantics(field)) {
+            format_.Outdent();
+            format_(
+                "} else {\n"
+                "  $pi_ns$::WriteVarint($1$, val, mutable_unknown_fields());\n"
+                "}\n",
+                field->number());
+          }
         } else {
           int size = field->type() == FieldDescriptor::TYPE_SINT32 ? 32 : 64;
           std::string zigzag;
           if ((field->type() == FieldDescriptor::TYPE_SINT32 ||
-               field->type() == FieldDescriptor::TYPE_SINT64) &&
-              !IsProto1(field->file(), options_)) {
+               field->type() == FieldDescriptor::TYPE_SINT64)) {
             zigzag = StrCat("ZigZag", size);
           }
-          format_(
-              "$1$_$2$($pi_ns$::ReadVarint$3$(&ptr));\n"
-              "$GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr);\n",
-              prefix, FieldName(field), zigzag);
+          if (field->is_repeated() || field->containing_oneof()) {
+            string prefix = field->is_repeated() ? "add" : "set";
+            format_(
+                "$1$_$2$($pi_ns$::ReadVarint$3$(&ptr));\n"
+                "CHK_(ptr);\n",
+                prefix, FieldName(field), zigzag);
+          } else {
+            if (HasFieldPresence(field->file())) {
+              format_("_Internal::set_has_$1$(&$has_bits$);\n",
+                      FieldName(field));
+            }
+            format_(
+                "$1$_ = $pi_ns$::ReadVarint$2$(&ptr);\n"
+                "CHK_(ptr);\n",
+                FieldName(field), zigzag);
+          }
         }
         break;
       }
       case WireFormatLite::WIRETYPE_FIXED32:
       case WireFormatLite::WIRETYPE_FIXED64: {
-        std::string prefix = field->is_repeated() ? "add" : "set";
         std::string type = PrimitiveTypeName(options_, field->cpp_type());
-        format_(
-            "$1$_$2$($pi_ns$::UnalignedLoad<$3$>(ptr));\n"
-            "ptr += sizeof($3$);\n",
-            prefix, FieldName(field), type);
+        if (field->is_repeated() || field->containing_oneof()) {
+          string prefix = field->is_repeated() ? "add" : "set";
+          format_(
+              "$1$_$2$($pi_ns$::UnalignedLoad<$3$>(ptr));\n"
+              "ptr += sizeof($3$);\n",
+              prefix, FieldName(field), type);
+        } else {
+          if (HasFieldPresence(field->file())) {
+            format_("_Internal::set_has_$1$(&$has_bits$);\n", FieldName(field));
+          }
+          format_(
+              "$1$_ = $pi_ns$::UnalignedLoad<$2$>(ptr);\n"
+              "ptr += sizeof($2$);\n",
+              FieldName(field), type);
+        }
         break;
       }
       case WireFormatLite::WIRETYPE_LENGTH_DELIMITED: {
         GenerateLengthDelim(field);
-        format_("$GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr);\n");
+        format_("CHK_(ptr);\n");
         break;
       }
       case WireFormatLite::WIRETYPE_START_GROUP: {
         format_(
-            "ptr = ctx->ParseGroup($1$_$2$(), ptr, tag);\n"
-            "$GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr);\n",
-            field->is_repeated() ? "add" : "mutable", FieldName(field));
+            "ptr = ctx->ParseGroup($1$_$2$(), ptr, $3$);\n"
+            "CHK_(ptr);\n",
+            field->is_repeated() ? "add" : "mutable", FieldName(field), tag);
         break;
       }
       case WireFormatLite::WIRETYPE_END_GROUP: {
@@ -1648,56 +1681,30 @@ class ParseLoopGenerator {
         break;
       }
     }  // switch (wire_type)
-
-    if (ShouldRepeat(field, wiretype)) {
-      uint32 x = field->number() * 8 + wiretype;
-      uint64 y = 0;
-      int cnt = 0;
-      do {
-        y += static_cast<uint64>((x & 0x7F) + (x >= 128 ? 128 : 0))
-             << (cnt++ * 8);
-        x >>= 7;
-      } while (x);
-      uint64 mask = (1ull << (cnt * 8)) - 1;
-      format_("if (ctx->Done(&ptr)) return ptr;\n");
-      format_.Outdent();
-      format_(
-          "} while (($pi_ns$::UnalignedLoad<$uint64$>(ptr)"
-          " & $1$) == $2$ && (ptr += $3$));\n",
-          mask, y, cnt);
-    }
-    format_("break;\n");
   }
 
-  void GenerateCaseBody(const FieldDescriptor* field) {
-    if (!IsProto1(field->file(), options_) && field->is_packable()) {
+  // Returns the tag for this field and in case of repeated packable fields,
+  // sets a fallback tag in fallback_tag_ptr.
+  static uint32 ExpectedTag(const FieldDescriptor* field,
+                            uint32* fallback_tag_ptr) {
+    uint32 expected_tag;
+    if (field->is_packable()) {
       auto expected_wiretype = WireFormat::WireTypeForFieldType(field->type());
-      GOOGLE_CHECK(expected_wiretype != WireFormatLite::WIRETYPE_LENGTH_DELIMITED);
-      uint32 expected_tag =
+      expected_tag =
           WireFormatLite::MakeTag(field->number(), expected_wiretype);
+      GOOGLE_CHECK(expected_wiretype != WireFormatLite::WIRETYPE_LENGTH_DELIMITED);
       auto fallback_wiretype = WireFormatLite::WIRETYPE_LENGTH_DELIMITED;
       uint32 fallback_tag =
           WireFormatLite::MakeTag(field->number(), fallback_wiretype);
 
-      if (field->is_packed()) {
-        std::swap(expected_tag, fallback_tag);
-        std::swap(expected_wiretype, fallback_wiretype);
-      }
-
-      format_("if (static_cast<$uint8$>(tag) == $1$) {\n", expected_tag & 0xFF);
-      format_.Indent();
-      GenerateCaseBody(expected_wiretype, field);
-      format_.Outdent();
-      format_(
-          "} else if (static_cast<$uint8$>(tag) != $1$) goto handle_unusual;\n",
-          fallback_tag & 0xFF);
-      GenerateCaseBody(fallback_wiretype, field);
+      if (field->is_packed()) std::swap(expected_tag, fallback_tag);
+      *fallback_tag_ptr = fallback_tag;
     } else {
-      auto wiretype = WireFormat::WireTypeForField(field);
-      format_("if (static_cast<$uint8$>(tag) != $1$) goto handle_unusual;\n",
-              WireFormat::MakeTag(field) & 0xFF);
-      GenerateCaseBody(wiretype, field);
+      auto expected_wiretype = WireFormat::WireTypeForField(field);
+      expected_tag =
+          WireFormatLite::MakeTag(field->number(), expected_wiretype);
     }
+    return expected_tag;
   }
 
   void GenerateParseLoop(
@@ -1707,7 +1714,7 @@ class ParseLoopGenerator {
         "while (!ctx->Done(&ptr)) {\n"
         "  $uint32$ tag;\n"
         "  ptr = $pi_ns$::ReadTag(ptr, &tag);\n"
-        "  $GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr);\n"
+        "  CHK_(ptr);\n"
         "  switch (tag >> 3) {\n");
 
     format_.Indent();
@@ -1727,13 +1734,49 @@ class ParseLoopGenerator {
       }
       format_(
           "// $1$\n"
-          "case $2$: {\n",
+          "case $2$:\n",
           def, field->number());
       format_.Indent();
-      GenerateCaseBody(field);
+      uint32 fallback_tag = 0;
+      uint32 expected_tag = ExpectedTag(field, &fallback_tag);
+      format_(
+          "if (PROTOBUF_PREDICT_TRUE(static_cast<$uint8$>(tag) == $1$)) {\n",
+          expected_tag & 0xFF);
+      format_.Indent();
+      auto wiretype = WireFormatLite::GetTagWireType(expected_tag);
+      uint32 tag = WireFormatLite::MakeTag(field->number(), wiretype);
+      int tag_size = io::CodedOutputStream::VarintSize32(tag);
+      bool is_repeat = ShouldRepeat(field, wiretype);
+      if (is_repeat) {
+        format_(
+            "ptr -= $1$;\n"
+            "do {\n"
+            "  ptr += $1$;\n",
+            tag_size);
+        format_.Indent();
+      }
+      GenerateFieldBody(wiretype, field);
+      if (is_repeat) {
+        string type = tag_size == 2 ? "uint16" : "uint8";
+        format_.Outdent();
+        format_(
+            "  if (!ctx->DataAvailable(ptr)) break;\n"
+            "} while ($pi_ns$::UnalignedLoad<$1$>(ptr) == $2$);\n",
+            IntTypeName(options_, type), SmallVarintValue(tag));
+      }
       format_.Outdent();
-      format_("}\n");  // case
-    }                  // for fields
+      if (fallback_tag) {
+        format_("} else if (static_cast<$uint8$>(tag) == $1$) {\n",
+                fallback_tag & 0xFF);
+        format_.Indent();
+        GenerateFieldBody(WireFormatLite::GetTagWireType(fallback_tag), field);
+        format_.Outdent();
+      }
+      format_.Outdent();
+      format_(
+          "  } else goto handle_unusual;\n"
+          "  continue;\n");
+    }  // for loop over ordered fields
 
     // Default case
     format_("default: {\n");
@@ -1741,10 +1784,10 @@ class ParseLoopGenerator {
     format_(
         "  if ((tag & 7) == 4 || tag == 0) {\n"
         "    ctx->SetLastTag(tag);\n"
-        "    return ptr;\n"
+        "    goto success;\n"
         "  }\n");
     if (IsMapEntryMessage(descriptor)) {
-      format_("  break;\n");
+      format_("  continue;\n");
     } else {
       if (descriptor->extension_range_count() > 0) {
         format_("if (");
@@ -1766,32 +1809,31 @@ class ParseLoopGenerator {
         }
         format_(") {\n");
         format_(
-            "  ptr = _extensions_.ParseField(tag, ptr, \n"
-            "      internal_default_instance(), &_internal_metadata_, "
-            "ctx);\n"
-            "  $GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr != nullptr);\n"
-            "  break;\n"
+            "  ptr = _extensions_.ParseField(tag, ptr,\n"
+            "      internal_default_instance(), &_internal_metadata_, ctx);\n"
+            "  CHK_(ptr != nullptr);\n"
+            "  continue;\n"
             "}\n");
       }
       format_(
           "  ptr = UnknownFieldParse(tag, &_internal_metadata_, ptr, ctx);\n"
-          "  $GOOGLE_PROTOBUF$_PARSER_ASSERT(ptr != nullptr);\n"
-          "  break;\n");
+          "  CHK_(ptr != nullptr);\n"
+          "  continue;\n");
     }
     format_("}\n");  // default case
     format_.Outdent();
     format_.Outdent();
     format_(
         "  }  // switch\n"
-        "}  // while\n"
-        "return ptr;\n");
+        "}  // while\n");
   }
 };
 
-void GenerateParserLoop(const Descriptor* descriptor, const Options& options,
+void GenerateParserLoop(const Descriptor* descriptor, int num_hasbits,
+                        const Options& options,
                         MessageSCCAnalyzer* scc_analyzer,
                         io::Printer* printer) {
-  ParseLoopGenerator generator(options, scc_analyzer, printer);
+  ParseLoopGenerator generator(num_hasbits, options, scc_analyzer, printer);
   generator.GenerateParserLoop(descriptor);
 }
 

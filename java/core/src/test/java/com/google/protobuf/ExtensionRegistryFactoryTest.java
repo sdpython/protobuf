@@ -30,8 +30,6 @@
 
 package com.google.protobuf;
 
-import protobuf_unittest.NestedExtension;
-import protobuf_unittest.NestedExtensionLite;
 import protobuf_unittest.NonNestedExtension;
 import protobuf_unittest.NonNestedExtensionLite;
 import java.lang.reflect.Method;
@@ -71,8 +69,6 @@ public class ExtensionRegistryFactoryTest extends TestCase {
     void testAdd();
 
     void testAdd_immutable();
-
-    void testExtensionRenamesKeywords();
   }
 
   /** Test implementations for the non-Lite usage of ExtensionRegistryFactory. */
@@ -127,8 +123,7 @@ public class ExtensionRegistryFactoryTest extends TestCase {
 
       assertTrue(
           "Test is using a non-lite extension",
-          GeneratedMessage.GeneratedExtension.class.isAssignableFrom(
-              NonNestedExtension.nonNestedExtension.getClass()));
+          Extension.class.isAssignableFrom(NonNestedExtension.nonNestedExtension.getClass()));
       assertNotNull(
           "Extension is registered in masqueraded full registry",
           fullRegistry2.findImmutableExtensionByName("protobuf_unittest.nonNestedExtension"));
@@ -159,23 +154,6 @@ public class ExtensionRegistryFactoryTest extends TestCase {
         fail();
       } catch (IllegalArgumentException expected) {
       }
-    }
-
-    @Override
-    public void testExtensionRenamesKeywords() {
-      assertTrue(NonNestedExtension.if_ instanceof GeneratedMessage.GeneratedExtension);
-      assertTrue(NestedExtension.MyNestedExtension.default_ instanceof GeneratedMessage.GeneratedExtension);
-
-      NonNestedExtension.MessageToBeExtended msg =
-              NonNestedExtension.MessageToBeExtended.newBuilder()
-                      .setExtension(NonNestedExtension.if_, "!fi")
-                      .build();
-      assertEquals("!fi", msg.getExtension(NonNestedExtension.if_));
-
-      msg = NonNestedExtension.MessageToBeExtended.newBuilder()
-              .setExtension(NestedExtension.MyNestedExtension.default_, 8)
-              .build();
-      assertEquals(8, msg.getExtension(NestedExtension.MyNestedExtension.default_).intValue());
     }
   }
 
@@ -222,23 +200,6 @@ public class ExtensionRegistryFactoryTest extends TestCase {
         fail();
       } catch (UnsupportedOperationException expected) {
       }
-    }
-
-    @Override
-    public void testExtensionRenamesKeywords() {
-      assertTrue(NonNestedExtensionLite.package_ instanceof GeneratedMessageLite.GeneratedExtension);
-      assertTrue(NestedExtensionLite.MyNestedExtensionLite.private_ instanceof GeneratedMessageLite.GeneratedExtension);
-
-      NonNestedExtensionLite.MessageLiteToBeExtended msg =
-              NonNestedExtensionLite.MessageLiteToBeExtended.newBuilder()
-              .setExtension(NonNestedExtensionLite.package_, true)
-              .build();
-      assertTrue(msg.getExtension(NonNestedExtensionLite.package_));
-
-      msg = NonNestedExtensionLite.MessageLiteToBeExtended.newBuilder()
-              .setExtension(NestedExtensionLite.MyNestedExtensionLite.private_, 2.4)
-              .build();
-      assertEquals(2.4, msg.getExtension(NestedExtensionLite.MyNestedExtensionLite.private_), 0.001);
     }
   }
 
@@ -311,7 +272,10 @@ public class ExtensionRegistryFactoryTest extends TestCase {
               resolveClass(loadedClass);
             }
           }
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException | SecurityException e) {
+          // Java 8+ would throw a SecurityException if we attempt to find a loaded class from
+          // java.lang.* package. We don't really care about those anyway, so just delegate to the
+          // parent class loader.
           loadedClass = super.loadClass(name, resolve);
         }
         return loadedClass;

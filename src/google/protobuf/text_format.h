@@ -208,6 +208,11 @@ class PROTOBUF_EXPORT TextFormat {
     virtual const FieldDescriptor* FindExtension(Message* message,
                                                  const std::string& name) const;
 
+    // Similar to FindExtension, but uses a Descriptor and the extension number
+    // instead of using a Message and the name when doing the look up.
+    virtual const FieldDescriptor* FindExtensionByNumber(
+        const Descriptor* descriptor, int number) const;
+
     // Find the message type for an Any proto.
     // Returns NULL if no message is known for this name.
     // The base implementation only accepts prefixes of type.googleprod.com/ or
@@ -551,6 +556,13 @@ class PROTOBUF_EXPORT TextFormat {
     // to false (the default). If true, unknown extensions will be ignored and
     // a warning message will be generated.
     void AllowUnknownExtension(bool allow) { allow_unknown_extension_ = allow; }
+
+    // When an unknown field is met, parsing will fail if this option is set
+    // to false(the default). If true, unknown fields will be ignored and
+    // a warning message will be generated.
+    // Please aware that set this option true may hide some errors (e.g.
+    // spelling error on field name). Avoid to use this option if possible.
+    void AllowUnknownField(bool allow) { allow_unknown_field_ = allow; }
 
 
     void AllowFieldNumber(bool allow) { allow_field_number_ = allow; }

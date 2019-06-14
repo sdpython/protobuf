@@ -56,10 +56,9 @@ void ExpectMessageMerged(const unittest::TestAllTypesLite& message) {
   EXPECT_EQ(message.optional_string(), "hello");
 }
 
-void AssignParsingMergeMessages(
-    unittest::TestAllTypesLite* msg1,
-    unittest::TestAllTypesLite* msg2,
-    unittest::TestAllTypesLite* msg3) {
+void AssignParsingMergeMessages(unittest::TestAllTypesLite* msg1,
+                                unittest::TestAllTypesLite* msg2,
+                                unittest::TestAllTypesLite* msg3) {
   msg1->set_optional_int32(1);
   msg2->set_optional_int64(2);
   msg3->set_optional_int32(3);
@@ -174,10 +173,10 @@ TEST(Lite, AllLite5) {
     unittest::TestAllTypesLite* msg2;
     unittest::TestAllTypesLite* msg3;
 
-#define ASSIGN_REPEATED_FIELD(FIELD)                \
-  msg1 = generator.add_##FIELD();                   \
-  msg2 = generator.add_##FIELD();                   \
-  msg3 = generator.add_##FIELD();                   \
+#define ASSIGN_REPEATED_FIELD(FIELD) \
+  msg1 = generator.add_##FIELD();    \
+  msg2 = generator.add_##FIELD();    \
+  msg3 = generator.add_##FIELD();    \
   AssignParsingMergeMessages(msg1, msg2, msg3)
 
     ASSIGN_REPEATED_FIELD(field1);
@@ -447,8 +446,7 @@ TEST(Lite, AllLite18) {
     protobuf_unittest::TestMessageMapLite message;
 
     // Creates a TestAllTypes with default value
-    TestUtilLite::ExpectClear(
-        (*message.mutable_map_int32_message())[0]);
+    TestUtilLite::ExpectClear((*message.mutable_map_int32_message())[0]);
   }
 }
 
@@ -836,30 +834,30 @@ TEST(Lite, AllLite42) {
   std::string data;
 
   {
-      // Check that adding more values to enum does not corrupt message
-      // when passed through an old client.
-      protobuf_unittest::V2MessageLite v2_message;
-      v2_message.set_int_field(800);
-      // Set enum field to the value not understood by the old client.
-      v2_message.set_enum_field(protobuf_unittest::V2_SECOND);
-      std::string v2_bytes = v2_message.SerializeAsString();
+    // Check that adding more values to enum does not corrupt message
+    // when passed through an old client.
+    protobuf_unittest::V2MessageLite v2_message;
+    v2_message.set_int_field(800);
+    // Set enum field to the value not understood by the old client.
+    v2_message.set_enum_field(protobuf_unittest::V2_SECOND);
+    std::string v2_bytes = v2_message.SerializeAsString();
 
-      protobuf_unittest::V1MessageLite v1_message;
-      v1_message.ParseFromString(v2_bytes);
-      EXPECT_TRUE(v1_message.IsInitialized());
-      EXPECT_EQ(v1_message.int_field(), v2_message.int_field());
-      // V1 client does not understand V2_SECOND value, so it discards it and
-      // uses default value instead.
-      EXPECT_EQ(v1_message.enum_field(), protobuf_unittest::V1_FIRST);
+    protobuf_unittest::V1MessageLite v1_message;
+    v1_message.ParseFromString(v2_bytes);
+    EXPECT_TRUE(v1_message.IsInitialized());
+    EXPECT_EQ(v1_message.int_field(), v2_message.int_field());
+    // V1 client does not understand V2_SECOND value, so it discards it and
+    // uses default value instead.
+    EXPECT_EQ(v1_message.enum_field(), protobuf_unittest::V1_FIRST);
 
-      // However, when re-serialized, it should preserve enum value.
-      std::string v1_bytes = v1_message.SerializeAsString();
+    // However, when re-serialized, it should preserve enum value.
+    std::string v1_bytes = v1_message.SerializeAsString();
 
-      protobuf_unittest::V2MessageLite same_v2_message;
-      same_v2_message.ParseFromString(v1_bytes);
+    protobuf_unittest::V2MessageLite same_v2_message;
+    same_v2_message.ParseFromString(v1_bytes);
 
-      EXPECT_EQ(v2_message.int_field(), same_v2_message.int_field());
-      EXPECT_EQ(v2_message.enum_field(), same_v2_message.enum_field());
+    EXPECT_EQ(v2_message.int_field(), same_v2_message.int_field());
+    EXPECT_EQ(v2_message.enum_field(), same_v2_message.enum_field());
   }
 }
 
@@ -1097,6 +1095,100 @@ TEST(Lite, DebugString) {
   // non-determinism, which should make it easier for us to change the output
   // later without breaking any code.
   EXPECT_NE(message1.DebugString(), message2.DebugString());
+}
+
+TEST(Lite, EnumValueToName) {
+  EXPECT_EQ("FOREIGN_LITE_FOO", protobuf_unittest::ForeignEnumLite_Name(
+                                    protobuf_unittest::FOREIGN_LITE_FOO));
+  EXPECT_EQ("FOREIGN_LITE_BAR", protobuf_unittest::ForeignEnumLite_Name(
+                                    protobuf_unittest::FOREIGN_LITE_BAR));
+  EXPECT_EQ("FOREIGN_LITE_BAZ", protobuf_unittest::ForeignEnumLite_Name(
+                                    protobuf_unittest::FOREIGN_LITE_BAZ));
+  EXPECT_EQ("", protobuf_unittest::ForeignEnumLite_Name(0));
+  EXPECT_EQ("", protobuf_unittest::ForeignEnumLite_Name(999));
+}
+
+TEST(Lite, NestedEnumValueToName) {
+  EXPECT_EQ("FOO", protobuf_unittest::TestAllTypesLite::NestedEnum_Name(
+                       protobuf_unittest::TestAllTypesLite::FOO));
+  EXPECT_EQ("BAR", protobuf_unittest::TestAllTypesLite::NestedEnum_Name(
+                       protobuf_unittest::TestAllTypesLite::BAR));
+  EXPECT_EQ("BAZ", protobuf_unittest::TestAllTypesLite::NestedEnum_Name(
+                       protobuf_unittest::TestAllTypesLite::BAZ));
+  EXPECT_EQ("", protobuf_unittest::TestAllTypesLite::NestedEnum_Name(0));
+  EXPECT_EQ("", protobuf_unittest::TestAllTypesLite::NestedEnum_Name(999));
+}
+
+TEST(Lite, EnumNameToValue) {
+  protobuf_unittest::ForeignEnumLite value;
+
+  ASSERT_TRUE(
+      protobuf_unittest::ForeignEnumLite_Parse("FOREIGN_LITE_FOO", &value));
+  EXPECT_EQ(protobuf_unittest::FOREIGN_LITE_FOO, value);
+
+  ASSERT_TRUE(
+      protobuf_unittest::ForeignEnumLite_Parse("FOREIGN_LITE_BAR", &value));
+  EXPECT_EQ(protobuf_unittest::FOREIGN_LITE_BAR, value);
+
+  ASSERT_TRUE(
+      protobuf_unittest::ForeignEnumLite_Parse("FOREIGN_LITE_BAZ", &value));
+  EXPECT_EQ(protobuf_unittest::FOREIGN_LITE_BAZ, value);
+
+  // Non-existent values
+  EXPECT_FALSE(protobuf_unittest::ForeignEnumLite_Parse("E", &value));
+  EXPECT_FALSE(
+      protobuf_unittest::ForeignEnumLite_Parse("FOREIGN_LITE_C", &value));
+  EXPECT_FALSE(protobuf_unittest::ForeignEnumLite_Parse("G", &value));
+}
+
+TEST(Lite, NestedEnumNameToValue) {
+  protobuf_unittest::TestAllTypesLite::NestedEnum value;
+
+  ASSERT_TRUE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("FOO", &value));
+  EXPECT_EQ(protobuf_unittest::TestAllTypesLite::FOO, value);
+
+  ASSERT_TRUE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("BAR", &value));
+  EXPECT_EQ(protobuf_unittest::TestAllTypesLite::BAR, value);
+
+  ASSERT_TRUE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("BAZ", &value));
+  EXPECT_EQ(protobuf_unittest::TestAllTypesLite::BAZ, value);
+
+  // Non-existent values
+  EXPECT_FALSE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("A", &value));
+  EXPECT_FALSE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("C", &value));
+  EXPECT_FALSE(
+      protobuf_unittest::TestAllTypesLite::NestedEnum_Parse("G", &value));
+}
+
+TEST(Lite, AliasedEnum) {
+  // Enums with allow_alias = true can have multiple entries with the same
+  // value.
+  EXPECT_EQ("FOO1", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(
+                        protobuf_unittest::DupEnum::FOO1));
+  EXPECT_EQ("FOO1", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(
+                        protobuf_unittest::DupEnum::FOO2));
+  EXPECT_EQ("BAR1", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(
+                        protobuf_unittest::DupEnum::BAR1));
+  EXPECT_EQ("BAR1", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(
+                        protobuf_unittest::DupEnum::BAR2));
+  EXPECT_EQ("BAZ", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(
+                       protobuf_unittest::DupEnum::BAZ));
+  EXPECT_EQ("", protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Name(999));
+
+  protobuf_unittest::DupEnum::TestEnumWithDupValueLite value;
+  ASSERT_TRUE(
+      protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Parse("FOO1", &value));
+  EXPECT_EQ(protobuf_unittest::DupEnum::FOO1, value);
+
+  value = static_cast<protobuf_unittest::DupEnum::TestEnumWithDupValueLite>(0);
+  ASSERT_TRUE(
+      protobuf_unittest::DupEnum::TestEnumWithDupValueLite_Parse("FOO2", &value));
+  EXPECT_EQ(protobuf_unittest::DupEnum::FOO2, value);
 }
 
 }  // namespace protobuf

@@ -394,11 +394,12 @@ PyObject* NewInternedDescriptor(PyTypeObject* type,
   return reinterpret_cast<PyObject*>(py_descriptor);
 }
 
-static void Dealloc(PyBaseDescriptor* self) {
+static void Dealloc(PyObject* pself) {
+  PyBaseDescriptor* self = reinterpret_cast<PyBaseDescriptor*>(pself);
   // Remove from interned dictionary
   interned_descriptors->erase(self->descriptor);
   Py_CLEAR(self->pool);
-  Py_TYPE(self)->tp_free(reinterpret_cast<PyObject*>(self));
+  Py_TYPE(self)->tp_free(pself);
 }
 
 static int GcTraverse(PyObject* pself, visitproc visit, void* arg) {
@@ -1323,7 +1324,7 @@ static const FileDescriptor* _GetDescriptor(PyFileDescriptor *self) {
 
 static void Dealloc(PyFileDescriptor* self) {
   Py_XDECREF(self->serialized_pb);
-  descriptor::Dealloc(&self->base);
+  descriptor::Dealloc(reinterpret_cast<PyObject*>(self));
 }
 
 static PyObject* GetPool(PyFileDescriptor *self, void *closure) {
@@ -1877,15 +1878,6 @@ PyObject* PyMethodDescriptor_FromDescriptor(
     const MethodDescriptor* method_descriptor) {
   return descriptor::NewInternedDescriptor(
       &PyMethodDescriptor_Type, method_descriptor, NULL);
-}
-
-const MethodDescriptor* PyMethodDescriptor_AsDescriptor(PyObject* obj) {
-  if (!PyObject_TypeCheck(obj, &PyMethodDescriptor_Type)) {
-    PyErr_SetString(PyExc_TypeError, "Not a MethodDescriptor");
-    return NULL;
-  }
-  return reinterpret_cast<const MethodDescriptor*>(
-      reinterpret_cast<PyBaseDescriptor*>(obj)->descriptor);
 }
 
 // Add a enum values to a type dictionary.

@@ -28,77 +28,68 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// ThreadUnsafeSharedPtr<T> is the same as shared_ptr<T> without the locking
-// overhread (and thread-safety).
-#ifndef GOOGLE_PROTOBUF_PYTHON_CPP_THREAD_UNSAFE_SHARED_PTR_H__
-#define GOOGLE_PROTOBUF_PYTHON_CPP_THREAD_UNSAFE_SHARED_PTR_H__
+#include <google/protobuf/generated_enum_util.h>
 
 #include <algorithm>
-#include <utility>
 
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/stubs/common.h>
+#include <google/protobuf/generated_message_util.h>
 
 namespace google {
 namespace protobuf {
-namespace python {
+namespace internal {
+namespace {
 
-template <typename T>
-class ThreadUnsafeSharedPtr {
- public:
-  // Takes ownership.
-  explicit ThreadUnsafeSharedPtr(T* ptr)
-      : ptr_(ptr), refcount_(ptr ? new RefcountT(1) : nullptr) {
+bool EnumCompareByName(const EnumEntry& a, const EnumEntry& b) {
+  return StringPiece(a.name) < StringPiece(b.name);
+}
+
+// Gets the numeric value of the EnumEntry at the given index, but returns a
+// special value for the index -1. This gives a way to use std::lower_bound on a
+// sorted array of indices while searching for value that we associate with -1.
+int GetValue(const EnumEntry* enums, int i, int target) {
+  if (i == -1) {
+    return target;
+  } else {
+    return enums[i].value;
   }
+}
 
-  ThreadUnsafeSharedPtr(const ThreadUnsafeSharedPtr& other)
-      : ThreadUnsafeSharedPtr(nullptr) {
-    *this = other;
+}  // namespace
+
+bool LookUpEnumValue(const EnumEntry* enums, size_t size,
+                     StringPiece name, int* value) {
+  EnumEntry target{name, 0};
+  auto it = std::lower_bound(enums, enums + size, target, EnumCompareByName);
+  if (it != enums + size && it->name == name) {
+    *value = it->value;
+    return true;
   }
+  return false;
+}
 
-  ThreadUnsafeSharedPtr& operator=(const ThreadUnsafeSharedPtr& other) {
-    if (other.refcount_ == refcount_) {
-      return *this;
-    }
-    this->~ThreadUnsafeSharedPtr();
-    ptr_ = other.ptr_;
-    refcount_ = other.refcount_;
-    if (refcount_) {
-      ++*refcount_;
-    }
-    return *this;
+int LookUpEnumName(const EnumEntry* enums, const int* sorted_indices,
+                   size_t size, int value) {
+  auto comparator = [enums, value](int a, int b) {
+    return GetValue(enums, a, value) < GetValue(enums, b, value);
+  };
+  auto it =
+      std::lower_bound(sorted_indices, sorted_indices + size, -1, comparator);
+  if (it != sorted_indices + size && enums[*it].value == value) {
+    return it - sorted_indices;
   }
+  return -1;
+}
 
-  ~ThreadUnsafeSharedPtr() {
-    if (refcount_ == nullptr) {
-      GOOGLE_DCHECK(ptr_ == nullptr);
-      return;
-    }
-    if (--*refcount_ == 0) {
-      delete refcount_;
-      delete ptr_;
-    }
+bool InitializeEnumStrings(
+    const EnumEntry* enums, const int* sorted_indices, size_t size,
+    internal::ExplicitlyConstructed<std::string>* enum_strings) {
+  for (int i = 0; i < size; ++i) {
+    enum_strings[i].Construct(enums[sorted_indices[i]].name);
+    internal::OnShutdownDestroyString(enum_strings[i].get_mutable());
   }
+  return true;
+}
 
-  void reset(T* ptr = nullptr) { *this = ThreadUnsafeSharedPtr(ptr); }
-
-  T* get() { return ptr_; }
-  const T* get() const { return ptr_; }
-
-  void swap(ThreadUnsafeSharedPtr& other) {
-    using std::swap;
-    swap(ptr_, other.ptr_);
-    swap(refcount_, other.refcount_);
-  }
-
- private:
-  typedef int RefcountT;
-  T* ptr_;
-  RefcountT* refcount_;
-};
-
-}  // namespace python
+}  // namespace internal
 }  // namespace protobuf
 }  // namespace google
-
-#endif  // GOOGLE_PROTOBUF_PYTHON_CPP_THREAD_UNSAFE_SHARED_PTR_H__
