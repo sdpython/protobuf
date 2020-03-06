@@ -35,6 +35,7 @@
 
 #include <stdlib.h>
 #include <vector>
+#include <cstring>
 #include <google/protobuf/stubs/common.h>
 #include <google/protobuf/stubs/stringpiece.h>
 
@@ -117,6 +118,12 @@ inline bool HasPrefixString(const string& str,
   return str.size() >= prefix.size() &&
          str.compare(0, prefix.size(), prefix) == 0;
 }
+  
+inline bool HasPrefixString(StringPiece str,
+                            StringPiece prefix) {
+  return str.size() >= prefix.size() &&
+  		 memcmp(str.data(), prefix.data(), prefix.size()) == 0;
+}
 
 inline string StripPrefixString(const string& str, const string& prefix) {
   if (HasPrefixString(str, prefix)) {
@@ -159,8 +166,6 @@ inline string StripSuffixString(const string& str, const string& suffix) {
 // ----------------------------------------------------------------------
 PROTOBUF_EXPORT void ReplaceCharacters(string* s, const char* remove,
                                        char replacewith);
-PROTOBUF_EXPORT void StripString(string* s, const char* remove,
-                                 char replacewith);
 
 PROTOBUF_EXPORT void StripWhitespace(string* s);
 
@@ -931,6 +936,14 @@ inline bool EndsWith(StringPiece text, StringPiece suffix) {
               suffix.size()) == 0);
 }
 }  // namespace strings
+
+namespace internal {
+
+// A locale-independent version of the standard strtod(), which always
+// uses a dot as the decimal separator.
+double NoLocaleStrtod(const char* str, char** endptr);
+
+}  // namespace internal
 
 }  // namespace protobuf
 }  // namespace google

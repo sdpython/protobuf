@@ -122,7 +122,7 @@ int msvc_vsnprintf(char* s, size_t n, const char* format, va_list arg);
 #ifdef __cplusplus
 #if __cplusplus >= 201103L || defined(__GXX_EXPERIMENTAL_CXX0X__) || \
     (defined(_MSC_VER) && _MSC_VER >= 1900)
-// C++11 is present
+/* C++11 is present */
 #else
 #error upb requires C++11 for C++ support
 #endif
@@ -3760,6 +3760,8 @@ const upb_msgdef *upb_symtab_lookupmsg2(
     const upb_symtab *s, const char *sym, size_t len);
 const upb_enumdef *upb_symtab_lookupenum(const upb_symtab *s, const char *sym);
 const upb_filedef *upb_symtab_lookupfile(const upb_symtab *s, const char *name);
+const upb_filedef *upb_symtab_lookupfile2(
+    const upb_symtab *s, const char *name, size_t len);
 int upb_symtab_filecount(const upb_symtab *s);
 const upb_filedef *upb_symtab_addfile(
     upb_symtab *s, const google_protobuf_FileDescriptorProto *file,
@@ -5700,15 +5702,16 @@ UPB_INLINE bool upb_sink_startsubmsg(upb_sink s, upb_selector_t sel,
   return sub->closure ? true : false;
 }
 
-UPB_INLINE bool upb_sink_endsubmsg(upb_sink s, upb_selector_t sel) {
+UPB_INLINE bool upb_sink_endsubmsg(upb_sink s, upb_sink sub,
+                                   upb_selector_t sel) {
   typedef upb_endfield_handlerfunc func;
   func *endsubmsg;
   const void *hd;
   if (!s.handlers) return true;
   endsubmsg = (func*)upb_handlers_gethandler(s.handlers, sel, &hd);
 
-  if (!endsubmsg) return s.closure;
-  return endsubmsg(s.closure, hd);
+  if (!endsubmsg) return true;
+  return endsubmsg(sub.closure, hd);
 }
 
 #ifdef __cplusplus
@@ -5874,8 +5877,8 @@ class upb::Sink {
     return ret;
   }
 
-  bool EndSubMessage(HandlersPtr::Selector s) {
-    return upb_sink_endsubmsg(sink_, s);
+  bool EndSubMessage(HandlersPtr::Selector s, Sink sub) {
+    return upb_sink_endsubmsg(sink_, sub.sink_, s);
   }
 
   /* For repeated fields of any type, the sequence of values must be wrapped in
@@ -6343,7 +6346,7 @@ struct upb_pbcodecache {
   bool allow_jit;
   bool lazy;
 
-  /* Array of mgroups. */
+  /* Map of upb_msgdef -> mgroup. */
   upb_inttable groups;
 };
 
@@ -6359,15 +6362,6 @@ typedef struct {
   /* The bytecode for our methods, if any exists.  Owned by us. */
   uint32_t *bytecode;
   uint32_t *bytecode_end;
-
-#ifdef UPB_USE_JIT_X64
-  /* JIT-generated machine code, if any. */
-  upb_string_handlerfunc *jit_code;
-  /* The size of the jit_code (required to munmap()). */
-  size_t jit_size;
-  char *debug_info;
-  void *dl;
-#endif
 } mgroup;
 
 /* The maximum that any submessages can be nested.  Matches proto2's limit.
@@ -6384,7 +6378,7 @@ typedef struct {
 typedef struct {
   /* Space optimization note: we store two pointers here that the JIT
    * doesn't need at all; the upb_handlers* inside the sink and
-   * the dispatch table pointer.  We can optimze so that the JIT uses
+   * the dispatch table pointer.  We can optimize so that the JIT uses
    * smaller stack frames than the interpreter.  The only thing we need
    * to guarantee is that the fallback routines can find end_ofs. */
   upb_sink sink;
@@ -6461,7 +6455,7 @@ struct upb_pbdecoder {
   char residual[UPB_DECODER_MAX_RESIDUAL_BYTES];
   char *residual_end;
 
-  /* Bytes of data that should be discarded from the input beore we start
+  /* Bytes of data that should be discarded from the input before we start
    * parsing again.  We set this when we internally determine that we can
    * safely skip the next N bytes, but this region extends past the current
    * user buffer. */
@@ -6478,19 +6472,10 @@ struct upb_pbdecoder {
   size_t stack_size;
 
   upb_status *status;
-
-#ifdef UPB_USE_JIT_X64
-  /* Used momentarily by the generated code to store a value while a user
-   * function is called. */
-  uint32_t tmp_len;
-
-  const void *saved_rsp;
-#endif
 };
 
 /* Decoder entry points; used as handlers. */
 void *upb_pbdecoder_startbc(void *closure, const void *pc, size_t size_hint);
-void *upb_pbdecoder_startjit(void *closure, const void *hd, size_t size_hint);
 size_t upb_pbdecoder_decode(void *closure, const void *hd, const char *buf,
                             size_t size, const upb_bufhandle *handle);
 bool upb_pbdecoder_end(void *closure, const void *handler_data);
@@ -6513,10 +6498,6 @@ extern const char *kPbDecoderSubmessageTooLong;
 
 /* Access to decoderplan members needed by the decoder. */
 const char *upb_pbdecoder_getopname(unsigned int op);
-
-/* JIT codegen entry point. */
-void upb_pbdecoder_jit(mgroup *group);
-void upb_pbdecoder_freejit(mgroup *group);
 
 /* A special label that means "do field dispatch for this message and branch to
  * wherever that takes you." */

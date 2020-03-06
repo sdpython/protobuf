@@ -1536,7 +1536,8 @@ static upb_tabkey strcopy(lookupkey_t k2, upb_alloc *a) {
   char *str = upb_malloc(a, k2.str.len + sizeof(uint32_t) + 1);
   if (str == NULL) return 0;
   memcpy(str, &len, sizeof(uint32_t));
-  memcpy(str + sizeof(uint32_t), k2.str.str, k2.str.len + 1);
+  memcpy(str + sizeof(uint32_t), k2.str.str, k2.str.len);
+  str[sizeof(uint32_t) + k2.str.len] = '\0';
   return (uintptr_t)str;
 }
 
@@ -6309,11 +6310,9 @@ static void set_bytecode_handlers(mgroup *g) {
 
 /* TODO(haberman): allow this to be constructed for an arbitrary set of dest
  * handlers and other mgroups (but verify we have a transitive closure). */
-const mgroup *mgroup_new(const upb_handlers *dest, bool allowjit, bool lazy) {
+const mgroup *mgroup_new(const upb_handlers *dest, bool lazy) {
   mgroup *g;
   compiler *c;
-
-  UPB_UNUSED(allowjit);
 
   g = newgroup();
   c = newcompiler(g, lazy);
@@ -6359,7 +6358,6 @@ upb_pbcodecache *upb_pbcodecache_new(upb_handlercache *dest) {
   if (!c) return NULL;
 
   c->dest = dest;
-  c->allow_jit = true;
   c->lazy = false;
 
   c->arena = upb_arena_new();
@@ -6369,27 +6367,17 @@ upb_pbcodecache *upb_pbcodecache_new(upb_handlercache *dest) {
 }
 
 void upb_pbcodecache_free(upb_pbcodecache *c) {
-  size_t i;
+  upb_inttable_iter i;
 
-  for (i = 0; i < upb_inttable_count(&c->groups); i++) {
-    upb_value v;
-    bool ok = upb_inttable_lookup(&c->groups, i, &v);
-    UPB_ASSERT(ok);
-    freegroup((void*)upb_value_getconstptr(v));
+  upb_inttable_begin(&i, &c->groups);
+  for(; !upb_inttable_done(&i); upb_inttable_next(&i)) {
+    upb_value val = upb_inttable_iter_value(&i);
+    freegroup((void*)upb_value_getconstptr(val));
   }
 
   upb_inttable_uninit(&c->groups);
   upb_arena_free(c->arena);
   upb_gfree(c);
-}
-
-bool upb_pbcodecache_allowjit(const upb_pbcodecache *c) {
-  return c->allow_jit;
-}
-
-void upb_pbcodecache_setallowjit(upb_pbcodecache *c, bool allow) {
-  UPB_ASSERT(upb_inttable_count(&c->groups) == 0);
-  c->allow_jit = allow;
 }
 
 void upb_pbdecodermethodopts_setlazy(upb_pbcodecache *c, bool lazy) {
@@ -6404,11 +6392,14 @@ const upb_pbdecodermethod *upb_pbcodecache_get(upb_pbcodecache *c,
   const upb_handlers *h;
   const mgroup *g;
 
-  /* Right now we build a new DecoderMethod every time.
-   * TODO(haberman): properly cache methods by their true key. */
   h = upb_handlercache_get(c->dest, md);
-  g = mgroup_new(h, c->allow_jit, c->lazy);
-  upb_inttable_push(&c->groups, upb_value_constptr(g));
+  if (upb_inttable_lookupptr(&c->groups, md, &v)) {
+    g = upb_value_getconstptr(v);
+  } else {
+    g = mgroup_new(h, c->lazy);
+    ok = upb_inttable_insertptr(&c->groups, md, upb_value_constptr(g));
+    UPB_ASSERT(ok);
+  }
 
   ok = upb_inttable_lookupptr(&g->methods, h, &v);
   UPB_ASSERT(ok);
@@ -6489,16 +6480,6 @@ static size_t stacksize(upb_pbdecoder *d, size_t entries) {
 
 static size_t callstacksize(upb_pbdecoder *d, size_t entries) {
   UPB_UNUSED(d);
-
-#ifdef UPB_USE_JIT_X64
-  if (d->method_->is_native_) {
-    /* Each native stack frame needs two pointers, plus we need a few frames for
-     * the enter/exit trampolines. */
-    size_t ret = entries * sizeof(void*) * 2;
-    ret += sizeof(void*) * 10;
-    return ret;
-  }
-#endif
 
   return entries * sizeof(uint32_t*);
 }
@@ -7315,17 +7296,6 @@ void *upb_pbdecoder_startbc(void *closure, const void *pc, size_t size_hint) {
   return d;
 }
 
-void *upb_pbdecoder_startjit(void *closure, const void *hd, size_t size_hint) {
-  upb_pbdecoder *d = closure;
-  UPB_UNUSED(hd);
-  UPB_UNUSED(size_hint);
-  d->top->end_ofs = UINT64_MAX;
-  d->bufstart_ofs = 0;
-  d->call_len = 0;
-  d->skip = 0;
-  return d;
-}
-
 bool upb_pbdecoder_end(void *closure, const void *handler_data) {
   upb_pbdecoder *d = closure;
   const upb_pbdecodermethod *method = handler_data;
@@ -7351,14 +7321,6 @@ bool upb_pbdecoder_end(void *closure, const void *handler_data) {
   end = offset(d);
   d->top->end_ofs = end;
 
-#ifdef UPB_USE_JIT_X64
-  if (method->is_native_) {
-    const mgroup *group = (const mgroup*)method->group;
-    if (d->top != d->stack)
-      d->stack->end_ofs = 0;
-    group->jit_code(closure, method->code_base.ptr, &dummy, 0, NULL);
-  } else
-#endif
   {
     const uint32_t *p = d->pc;
     d->stack->end_ofs = end;
@@ -9735,7 +9697,7 @@ static bool start_stringval(upb_json_parser *p) {
   } else if (upb_fielddef_type(p->top->f) != UPB_TYPE_BOOL &&
              upb_fielddef_type(p->top->f) != UPB_TYPE_MESSAGE) {
     /* No need to push a frame -- numeric values in quotes remain in the
-     * current parser frame.  These values must accmulate so we can convert
+     * current parser frame.  These values must accumulate so we can convert
      * them all at once at the end. */
     multipart_startaccum(p);
     return true;
@@ -10155,46 +10117,28 @@ static void start_timestamp_zone(upb_json_parser *p, const char *ptr) {
   capture_begin(p, ptr);
 }
 
-#define EPOCH_YEAR 1970
-#define TM_YEAR_BASE 1900
+/* epoch_days(1970, 1, 1) == 1970-01-01 == 0. */
+static int epoch_days(int year, int month, int day) {
+  static const uint16_t month_yday[12] = {0,   31,  59,  90,  120, 151,
+                                          181, 212, 243, 273, 304, 334};
+  int febs_since_0 = month > 2 ? year + 1 : year;
+  int leap_days_since_0 = div_round_up(febs_since_0, 4) -
+                          div_round_up(febs_since_0, 100) +
+                          div_round_up(febs_since_0, 400);
+  int days_since_0 =
+      365 * year + month_yday[month - 1] + (day - 1) + leap_days_since_0;
 
-static bool isleap(int year) {
-  return (year % 4) == 0 && (year % 100 != 0 || (year % 400) == 0);
+  /* Convert from 0-epoch (0001-01-01 BC) to Unix Epoch (1970-01-01 AD).
+   * Since the "BC" system does not have a year zero, 1 BC == year zero. */
+  return days_since_0 - 719528;
 }
 
-const unsigned short int __mon_yday[2][13] = {
-    /* Normal years.  */
-    { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365 },
-    /* Leap years.  */
-    { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366 }
-};
-
-int64_t epoch(int year, int yday, int hour, int min, int sec) {
-  int64_t years = year - EPOCH_YEAR;
-
-  int64_t leap_days = years / 4 - years / 100 + years / 400;
-
-  int64_t days = years * 365 + yday + leap_days;
-  int64_t hours = days * 24 + hour;
-  int64_t mins = hours * 60 + min;
-  int64_t secs = mins * 60 + sec;
-  return secs;
-}
-
-
-static int64_t upb_mktime(const struct tm *tp) {
-  int sec = tp->tm_sec;
-  int min = tp->tm_min;
-  int hour = tp->tm_hour;
-  int mday = tp->tm_mday;
-  int mon = tp->tm_mon;
-  int year = tp->tm_year + TM_YEAR_BASE;
-
-  /* Calculate day of year from year, month, and day of month. */
-  int mon_yday = ((__mon_yday[isleap(year)][mon]) - 1);
-  int yday = mon_yday + mday;
-
-  return epoch(year, yday, hour, min, sec);
+static int64_t upb_timegm(const struct tm *tp) {
+  int64_t ret = epoch_days(tp->tm_year + 1900, tp->tm_mon + 1, tp->tm_mday);
+  ret = (ret * 24) + tp->tm_hour;
+  ret = (ret * 60) + tp->tm_min;
+  ret = (ret * 60) + tp->tm_sec;
+  return ret;
 }
 
 static bool end_timestamp_zone(upb_json_parser *p, const char *ptr) {
@@ -10224,7 +10168,7 @@ static bool end_timestamp_zone(upb_json_parser *p, const char *ptr) {
   }
 
   /* Normalize tm */
-  seconds = upb_mktime(&p->tm);
+  seconds = upb_timegm(&p->tm);
 
   /* Check timestamp boundary */
   if (seconds < -62135596800) {

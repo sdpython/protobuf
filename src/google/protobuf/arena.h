@@ -33,6 +33,7 @@
 #ifndef GOOGLE_PROTOBUF_ARENA_H__
 #define GOOGLE_PROTOBUF_ARENA_H__
 
+
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -68,7 +69,6 @@ struct ArenaOptions;  // defined below
 }  // namespace protobuf
 }  // namespace google
 
-
 namespace google {
 namespace protobuf {
 
@@ -88,6 +88,7 @@ namespace internal {
 
 struct ArenaStringPtr;  // defined in arenastring.h
 class LazyField;        // defined in lazy_field.h
+class EpsCopyInputStream;  // defined in parse_context.h
 
 template <typename Type>
 class GenericTypeHandler;  // defined in repeated_field.h
@@ -247,7 +248,7 @@ struct ArenaOptions {
 // well as protobuf container types like RepeatedPtrField and Map. The protocol
 // is internal to protobuf and is not guaranteed to be stable. Non-proto types
 // should not rely on this protocol.
-class PROTOBUF_EXPORT alignas(8) Arena final {
+class PROTOBUF_EXPORT PROTOBUF_ALIGNAS(8) Arena final {
  public:
   // Arena constructor taking custom options. See ArenaOptions below for
   // descriptions of the options available.
@@ -337,8 +338,10 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
   template <typename T>
   PROTOBUF_ALWAYS_INLINE static T* CreateArray(Arena* arena,
                                                size_t num_elements) {
+#ifndef __INTEL_COMPILER // icc mis-evaluates some types as non-pod
     static_assert(std::is_pod<T>::value,
                   "CreateArray requires a trivially constructible type");
+#endif
     static_assert(std::is_trivially_destructible<T>::value,
                   "CreateArray requires a trivially destructible type");
     GOOGLE_CHECK_LE(num_elements, std::numeric_limits<size_t>::max() / sizeof(T))
@@ -359,14 +362,6 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
   // may not include space used by other threads executing concurrently with
   // the call to this method.
   uint64 SpaceUsed() const { return impl_.SpaceUsed(); }
-  // DEPRECATED. Please use SpaceAllocated() and SpaceUsed().
-  //
-  // Combines SpaceAllocated and SpaceUsed. Returns a pair of
-  // <space_allocated, space_used>.
-  PROTOBUF_DEPRECATED_MSG("Please use SpaceAllocated() and SpaceUsed()")
-  std::pair<uint64, uint64> SpaceAllocatedAndUsed() const {
-    return std::make_pair(SpaceAllocated(), SpaceUsed());
-  }
 
   // Frees all storage allocated by this arena after calling destructors
   // registered with OwnDestructor() and freeing objects registered with Own().
@@ -543,7 +538,7 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
     AllocHook(RTTI_TYPE_ID(T), n);
     // Monitor allocation if needed.
     if (skip_explicit_ownership) {
-      return impl_.AllocateAligned(n);
+      return AllocateAlignedNoHook(n);
     } else {
       return impl_.AllocateAlignedAndAddCleanup(
           n, &internal::arena_destruct_object<T>);
@@ -604,7 +599,7 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
     const size_t n = internal::AlignUpTo8(sizeof(T) * num_elements);
     // Monitor allocation if needed.
     AllocHook(RTTI_TYPE_ID(T), n);
-    return static_cast<T*>(impl_.AllocateAligned(n));
+    return static_cast<T*>(AllocateAlignedNoHook(n));
   }
 
   template <typename T, typename... Args>
@@ -697,8 +692,10 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
   // For friends of arena.
   void* AllocateAligned(size_t n) {
     AllocHook(NULL, n);
-    return impl_.AllocateAligned(internal::AlignUpTo8(n));
+    return AllocateAlignedNoHook(internal::AlignUpTo8(n));
   }
+
+  void* AllocateAlignedNoHook(size_t n);
 
   internal::ArenaImpl impl_;
 
@@ -715,6 +712,7 @@ class PROTOBUF_EXPORT alignas(8) Arena final {
   friend class internal::GenericTypeHandler;
   friend struct internal::ArenaStringPtr;  // For AllocateAligned.
   friend class internal::LazyField;        // For CreateMaybeMessage.
+  friend class internal::EpsCopyInputStream;  // For parser performance
   friend class MessageLite;
   template <typename Key, typename T>
   friend class Map;

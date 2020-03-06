@@ -146,8 +146,17 @@
 #define PROTOBUF_NAMESPACE_CLOSE \
   } /* namespace protobuf */     \
   } /* namespace google */
-#define PROTOBUF_DEPRECATED
-#define PROTOBUF_DEPRECATED_MSG(x)
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PROTOBUF_DEPRECATED __attribute__((deprecated))
+#define PROTOBUF_DEPRECATED_ENUM __attribute__((deprecated))
+#define PROTOBUF_DEPRECATED_MSG(msg) __attribute__((deprecated(msg)))
+#elif defined(_MSC_VER)
+#define PROTOBUF_DEPRECATED __declspec(deprecated)
+#define PROTOBUF_DEPRECATED_ENUM
+#define PROTOBUF_DEPRECATED_MSG(msg) __declspec(deprecated(msg))
+#endif
+
 #define PROTOBUF_SECTION_VARIABLE(x)
 #define PROTOBUF_MUST_USE_RESULT
 
@@ -288,14 +297,14 @@
 
 // Shared google3/opensource definitions. //////////////////////////////////////
 
-#define PROTOBUF_VERSION 3009001
-#define PROTOBUF_MIN_HEADER_VERSION_FOR_PROTOC 3009000
-#define PROTOBUF_MIN_PROTOC_VERSION 3009000
+#define PROTOBUF_VERSION 3011004
+#define PROTOBUF_MIN_HEADER_VERSION_FOR_PROTOC 3011000
+#define PROTOBUF_MIN_PROTOC_VERSION 3011000
 #define PROTOBUF_VERSION_SUFFIX ""
 
 // The minimum library version which works with the current version of the
 // headers.
-#define GOOGLE_PROTOBUF_MIN_LIBRARY_VERSION 3009000
+#define GOOGLE_PROTOBUF_MIN_LIBRARY_VERSION 3011000
 
 #if defined(GOOGLE_PROTOBUF_NO_RTTI) && GOOGLE_PROTOBUF_NO_RTTI
 #define PROTOBUF_RTTI 0
@@ -331,31 +340,64 @@
                          reinterpret_cast<const char*>(16))
 #endif
 
-#if defined(_MSC_VER) && defined(PROTOBUF_USE_DLLS)
-#ifdef LIBPROTOBUF_EXPORTS
-#define PROTOBUF_EXPORT __declspec(dllexport)
-#else
-#define PROTOBUF_EXPORT __declspec(dllimport)
-#endif
-#ifdef LIBPROTOC_EXPORTS
-#define PROTOC_EXPORT __declspec(dllexport)
-#else
-#define PROTOC_EXPORT __declspec(dllimport)
-#endif
-#else
-#define PROTOBUF_EXPORT
-#define PROTOC_EXPORT
+#if defined(PROTOBUF_USE_DLLS)
+  #if defined(_MSC_VER)
+    #ifdef LIBPROTOBUF_EXPORTS
+      #define PROTOBUF_EXPORT __declspec(dllexport)
+      #define PROTOBUF_EXPORT_TEMPLATE_DECLARE
+      #define PROTOBUF_EXPORT_TEMPLATE_DEFINE __declspec(dllexport)
+    #else
+      #define PROTOBUF_EXPORT __declspec(dllimport)
+      #define PROTOBUF_EXPORT_TEMPLATE_DECLARE
+      #define PROTOBUF_EXPORT_TEMPLATE_DEFINE __declspec(dllimport)
+    #endif
+    #ifdef LIBPROTOC_EXPORTS
+      #define PROTOC_EXPORT __declspec(dllexport)
+    #else
+      #define PROTOC_EXPORT __declspec(dllimport)
+    #endif
+  #else  // defined(_MSC_VER)
+    #ifdef LIBPROTOBUF_EXPORTS
+      #define PROTOBUF_EXPORT __attribute__((visibility("default")))
+      #define PROTOBUF_EXPORT_TEMPLATE_DECLARE __attribute__((visibility("default")))
+      #define PROTOBUF_EXPORT_TEMPLATE_DEFINE
+    #else
+      #define PROTOBUF_EXPORT
+      #define PROTOBUF_EXPORT_TEMPLATE_DECLARE
+      #define PROTOBUF_EXPORT_TEMPLATE_DEFINE
+    #endif
+    #ifdef LIBPROTOC_EXPORTS
+      #define PROTOC_EXPORT   __attribute__((visibility("default")))
+    #else
+      #define PROTOC_EXPORT
+    #endif
+  #endif
+#else  // defined(PROTOBUF_USE_DLLS)
+  #define PROTOBUF_EXPORT
+  #define PROTOC_EXPORT
+  #define PROTOBUF_EXPORT_TEMPLATE_DECLARE
+  #define PROTOBUF_EXPORT_TEMPLATE_DEFINE
 #endif
 
 // Windows declares several inconvenient macro names.  We #undef them and then
 // restore them in port_undef.inc.
 #ifdef _MSC_VER
+#pragma push_macro("ERROR")
+#undef ERROR
 #pragma push_macro("GetMessage")
 #undef GetMessage
 #pragma push_macro("IGNORE")
 #undef IGNORE
 #pragma push_macro("IN")
 #undef IN
+#pragma push_macro("OUT")
+#undef OUT
+#pragma push_macro("OPTIONAL")
+#undef OPTIONAL
+#pragma push_macro("min")
+#undef min
+#pragma push_macro("max")
+#undef max
 #endif  // _MSC_VER
 
 #if defined(__clang__)
@@ -379,4 +421,33 @@
 #endif
 #else
 #define PROTOBUF_ASSUME(pred) GOOGLE_DCHECK(pred)
+#endif
+
+// Specify memory alignment for structs, classes, etc.
+// Use like:
+//   class PROTOBUF_ALIGNAS(16) MyClass { ... }
+//   PROTOBUF_ALIGNAS(16) int array[4];
+//
+// In most places you can use the C++11 keyword "alignas", which is preferred.
+//
+// But compilers have trouble mixing __attribute__((...)) syntax with
+// alignas(...) syntax.
+//
+// Doesn't work in clang or gcc:
+//   struct alignas(16) __attribute__((packed)) S { char c; };
+// Works in clang but not gcc:
+//   struct __attribute__((packed)) alignas(16) S2 { char c; };
+// Works in clang and gcc:
+//   struct alignas(16) S3 { char c; } __attribute__((packed));
+//
+// There are also some attributes that must be specified *before* a class
+// definition: visibility (used for exporting functions/classes) is one of
+// these attributes. This means that it is not possible to use alignas() with a
+// class that is marked as exported.
+#if defined(_MSC_VER)
+#define PROTOBUF_ALIGNAS(byte_alignment) __declspec(align(byte_alignment))
+#elif defined(__GNUC__)
+#define PROTOBUF_ALIGNAS(byte_alignment) __attribute__((aligned(byte_alignment)))
+#else
+#define PROTOBUF_ALIGNAS(byte_alignment) alignas(byte_alignment)
 #endif
